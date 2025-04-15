@@ -1,5 +1,5 @@
 ---
-title: "02_ms_figures_results"
+title: "Figures and Results"
 author: "Jessica Gephart"
 date: "2024-06-05"
 output: html_document

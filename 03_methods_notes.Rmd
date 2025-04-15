@@ -1,0 +1,134 @@
+---
+title: "Methods Notes"
+author: "Jessica Gephart"
+output: 
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '2'
+---
+
+# Objective
+
+Explain the export of environmental pressure via trade within the context of environmental justice. We are testing whether covariates related to environmental injustices (e.g., some relation to power or colonialism) are predictors of patterns of environmental pressure trade, when accounting for the standard explanations of trade. 
+
+# Basic gravity model background
+
+(From <https://cran.r-project.org/web/packages/gravity/vignettes/crash-course-on-gravity-models.html>)
+
+Gravity models in their traditional form are inspired by Newton law of gravitation:
+
+$$F_{ij} = G \frac{M_iM_j}{D^2_{ij}}$$
+
+The force F between two bodies i and j with i≠j is proportional to the masses M of these bodies and inversely proportional to the square of their geographical distance D. G is a constant.
+
+The underlying idea of a traditional gravity model, shown for international trade, is equally simple:
+
+$$X_{ij} = G \frac{Y^{\beta_1}_iY^{\beta_2}_j}{D^2_{ij}}$$
+The trade flow $X$ is explained by $Y_i$ and $Y_j$ that are the masses of the exporting and importing country (e.g. the GDP) and $D_{ij}$ that is the distance between the countries.
+
+Dummy variables such as common borders or regional trade agreements can be added to the model. Let tij be the transaction cost defined as:
+
+$$t_{ij} = D_{ij}exp(contig_{ij}+rta_{ij})$$
+
+So that the model with friction becomes:
+
+$$X_{ij} = G \frac{Y^{\beta_1}_iY^{\beta_2}_j}{t^{\beta_3}_{ij}}$$
+A logarithmic operator can be applied to form a log-linear model and use a standard estimation methods such as OLS:
+
+$$log(X_{ij}) = \beta_0 log(G)+ \beta_1log(Y_i)+ \beta_2log(Y_j)+\beta_3log(D_{ij}+\beta_4contigij+\beta_5rta_{ij}$$
+
+# Available covariates
+
+Full data descriptions available at <http://www.cepii.fr/DATA_DOWNLOAD/gravity/doc/Gravity_documentation.pdf>.
+
+## Country identifiers
+
+* country_id: country identifier, unilateral.
+* iso3: ISO3 alphabetic code, unilateral.
+* iso3num: ISO3 numeric code, unilateral.
+* countrygroup_iso3: Country group (ISO3 alphabetic code), unilateral.
+* countrygroup_iso3num: Country group (ISO3 numeric code), unilateral.
+* country: Country name, unilateral.
+* countrylong: Country official name, unilateral.
+* first_year: First year of territorial existence, unilateral.
+* last_year: Last year of territorial existence, unilateral.
+
+## Geographic variables
+
+* gmt_offset_2020: GMT offset in 2020 of the country measured in hours, unilateral.
+* contig: Dummy equal to 1 if countries are contiguous, bilateral.
+* dist: Distance between most populated city of each country, measured in km, bilateral.
+* distw: Population-weighted distance between most populated cities, measured in km, bilateral.
+* distcap: Distance between capitals, measured in km, bilateral.
+* distwces: Population-weighted distance between most populated cities, measured in km, calculated using CES formulation with θ = −1 (see Head and Mayer 2010 for more details), bilateral.
+* dist_source: Dummy variable indicating the source of distance data. It is equal to 1 if data is taken directly from CEPII’s GeoDist and to 0 if we have filled it in based on past territorial configurations, as described below. bilateral.
+
+## Cultural variables
+
+* comlang_off: Dummy equal to 1 if countries share common official or primary language, bilateral.
+* comlang_ethno: Dummy equal to 1 if countries share a common language spoken by at least 9% of the population, bilateral.
+* comcol: Dummy equal to 1 if countries share a common colonizer post 1945, bilateral.
+* col45: Dummy equal to 1 if countries are or were in colonial relationship post 1945, bilateral.
+* legal_old: Indicates historical origin of a country’s laws, before transition of some countries from the Socialist legal system following the fall of the Soviet Union. It takes values of either fr (French), ge (German), sc (Scandinavian), so (Socialist), uk (English), unilateral.
+legal_new: Indicates historical origin of a country’s laws, after the above-mentioned transition, unilateral. Possible values are the same as for legal_old.
+* comleg_pretrans: Dummy equal to 1 if countries share common legal origins before transition, bilateral.
+* comleg_pretrans: Dummy equal to 1 if countries share common legal origins before transition, bilateral.
+* comleg_posttrans: Dummy equal to 1 if countries share common legal origins after transition, bilateral.
+* transition_legalchange: Dummy equal to 1 if common legal origin has changed since the above-mentioned transition, bilateral.
+* comrelig: Religious proximity index (Disdier and Mayer 2007): obtained by adding the products of the shares of Catholics, Protestants and Muslims in the exporting and importing countries. It is bounded between 0 and 1, and is maximum if the country pair has a religion which (1) comprises a vast majority of the population, and (2) is the same in both countries.
+* heg_o: Dummy equal to 1 if origin is current or former hegemon of destination, bilateral.
+* heg_d: Dummy equal to 1 if destination is current or former hegemon of origin, bilateral.
+* col_dep_ever: Dummy equal to 1 if country pair was ever in colonial relationship. This variable also takes into account colonial relationships before 1948 and is a bilateral variable.
+* col_dep: Dummy equal to 1 if country pair currently in colonial or dependency relationship, bilateral.
+* col_dep_end_year: Independence date from hegemon of the time, if pair was ever in a colonial or dependency relationship (col_dep_ever is equal to 1). Missing if the pair never was in a colonial or dependency relationship (col_dep_ever = 0). This variable also takes into account colonial relationships before 1948 and is a bilateral variable.
+* col_dep_end_conflict: Dummy equal to 1 if independence involved conflict and ifcol_dep_ever is equal to 1. Missing if the pair never was in a colonial or dependency relationship (col_dep_ever = 0). This variable also takes into account colonial relationships before 1948 and is a bilateral variable.
+* sibling_ever: Dummy equal to 1 if pair ever in sibling relationship (i.e. they ever had the same hegemon). This variable also takes into account colonial relationships before 1948 and is a bilateral variable.
+* sibling: Dummy equal to 1 if pair currently in sibling relationship (i.e. they have the same hegemon), bilateral.
+* empire: Hegemon if sibling equal to 1 for the time that country i and j are in current sibling relationship (i.e. year is smaller than sever_year), bilateral.
+* sever_year: Severance year for pairs if sibling_ever is equal to 1. Severance year corresponds to the year in which the first sibling in the sibling relationship became independent. This variable also takes into account colonial relationships before 1948 and is a bilateral variable.
+* sib_conflict: Dummy equal to 1 if pair ever in sibling relationship (sibling_ever = 1) and their independence from the hegemon involved conflict with hegemon. This variable also takes into account colonial relationships before 1948 and is a bilateral variable.
+
+## Macroeconomic indicators
+
+* pop: Population, in thousands (source WDI/Maddison), unilateral.
+* gdp: GDP, in current thousands US$ (source WDI/Barbieri), unilateral.
+* gdpcap: GDP per cap, in current thousands US$ (source WDI/Barbieri), unilateral.
+* gdp_ppp: GDP PPP, in current thousands international $ (source WDI), unilateral.
+* gdpcap_ppp: GDP per cap PPP, in current thousands international $ (source WDI), unilateral.
+* pop_pwt: Population, in thousands (source PWT), unilateral.
+* gdp_ppp_pwt: GDP, current PPP, in 2011 thousands US$ (source PWT), unilateral.
+* gdp_source: Source of GDP data: 1 = WDI, 2 = Barbieri, 3 = Taiwan Govt), unilateral.
+* pop_source: Source of population data: 1 = WDI, 2 = Maddison, 3 = Taiwan Govt, unilateral.
+
+## Trade facillitation variables
+
+* gatt: Dummy equal to 1 if country is a GATT member in a given year, unilateral.
+* wto: Dummy equal to 1 if country is a WTO member in a given year, unilateral.
+* eu: Dummy equal to 1 if country is a EU member in a given year, unilateral.
+* rta: Dummy equal to 1 if origin and destination country are engaged in a regional trade agreement of any type within the given year (Source: WTO), bilateral.
+* rta_coverage: Coverage of the trade agreement. 0 = “no trade agreement” (r ta = 0). 1 = “goods only”, 2 = “services only”, 3 = “goods and services”. Source: WTO, bilateral.
+* rta_type: Categorical variable describing type of regional trade agreement if origin and destination country are engaged in a regional trade agreement within the given year and rta = 1 (Source: WTO, see Table ?? for a description of the values taken by this variable), bilateral.
+* entry_cost: Cost of business start-up procedures (% of GNI per capita), unilateral.
+* entry_proc: Number of start-up procedures to register a business, unilateral.
+* entry_time: Days required to start a business, unilateral.
+* entry_tp: Days required to start a business + number of procedures to start a business, unilateral.
+
+# Fitting a gravity model
+
+There is an *R* package *gravity* that can be used to fit these models. However, there are still many decisions about how to fit the model, as the literature is quite large and there are several approaches. Some included in the package include: 
+
+* Double Demeaning: subtracts importer and exporter averages on the left and right hand side of the respective gravity equation, and all unilateral influences including the Multilateral Resistance terms vanish. Therefore, no unilateral variables may be added as independent variables for the estimation.
+* Bonus Vetus: a modification of the simple OLS that allows for comparative statics and yields results close to those of NLS. Estimates gravity models in their additive form. By applying a Taylor-series expansion and the assumption of symmetrical, bilateral trade costs, they develop a reduced gravity model in which multilateral and worldwide resistance enter exogenously.
+* Poisson Pseudo Maximum Likelihood: Silva and Tenreyro (2006) argue that estimating gravity equations in their additive form by OLS leads to inconsistency in the presence of heteroscedasticity and advice to estimate gravity models in their multiplicative form.
+* Gamma Pseudo Maximum Likelihood: The estimation method is similar to PPML, but utilizes the gamma instead of the poisson distribution. Depending on data structure, GPML can be preferable to PPML.
+* Negative Binomial Pseudo Maximum Likelihood: The estimation method is similar to PPML, but utilizes the negative binomial instead of the poisson distribution, thereby implies different assumptions to the data structure and does not allow for zero trade values.
+* Tetrads: In order to use the fixed effects method with panel data, a huge number of dummy variables has to be included into the estimation. Thus, estimating these models can lead to significant computational difficulties. Head, Mayer, and Ries (2010) present Tetrads as an estimation method circumventing this problem. They exploit the multiplicative form of the gravity equation to form the ratio of ratios. In doing so, both MR terms drop out of the equation.
+
+These descriptions are for select options available in the R package (<https://cran.r-project.org/web/packages/gravity/vignettes/crash-course-on-gravity-models.html>)
+
+# Methodological issues
+
+* Consider handling of zero trade (e.g., <https://www.tandfonline.com/doi/full/10.1080/00036840802599784>)
+* Best way to fit the model (see previous section)
+
