@@ -50,4 +50,5 @@ gravity_covar_cleaning/*
 ms/*
 
 # file types
-.html
+*.html
+*.Rproj
