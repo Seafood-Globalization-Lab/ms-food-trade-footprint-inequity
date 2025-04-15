@@ -1,0 +1,2010 @@
+---
+title: "02_ms_figures_results"
+author: "Jessica Gephart"
+date: "2024-06-05"
+output: html_document
+---
+
+# Setup
+## Load packages and set directory
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+rm(list = ls())
+
+# Data cleaning
+library(tidyverse)
+library(countrycode)
+library(CoordinateCleaner)
+library(knitr)
+library(data.table)
+
+# Plotting
+library(ggcorrplot)
+library(rnaturalearth)
+library(ggthemes)
+library(ggpubr)
+library(reldist)
+library(viridis)
+library(gglorenz)
+library(gridExtra)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(cowplot)
+library(GGally)
+library(corrplot)
+library(ggrepel)
+library(CoordinateCleaner) # For country centroids for arrows
+library(ggsankey)
+library(hrbrthemes)
+library(RColorBrewer)
+library(colorspace)
+
+# Modeling
+library(gravity)
+library(randomForest)
+
+datadir <- "/home/shares/food-systems/social_justice_projects/food_trade_pressures/output_data"
+
+source("00_plot_functions.R")
+```
+
+## Load cleaned and formatted data
+```{r}
+# Read in cleaned data with covariates
+stressor_trade_total <- fread("data/stressor_trade_total_w_covariates.csv") %>%
+  # Add cumulative pressure indicator
+  mutate(cumulative_ghg = ghg/sum(ghg),
+         cumulative_water = water/sum(water), 
+         cumulative_nutrient = nutrient/sum(nutrient),
+         cumulative_disturbance = disturbance/sum(disturbance)) %>%
+  mutate(cumulative_total = cumulative_ghg + cumulative_water + cumulative_nutrient + cumulative_disturbance) %>%
+  mutate(flow = case_when(
+    iso3_o == iso3_d ~ "domestic",
+    iso3_o != iso3_d ~ "foreign"
+  )) %>%
+  mutate(country_name_o = countrycode(iso3_o, origin = "iso3c", destination = "country.name"),
+         country_name_d = countrycode(iso3_d, origin = "iso3c", destination = "country.name")) %>%
+  mutate(region_o = countrycode(iso3_o, origin = "iso3c", destination = "region"),
+         region_d = countrycode(iso3_d, origin = "iso3c", destination = "region")) 
+
+stressor_trade_by_food <- fread("data/stressor_trade_by_food_w_covariates.csv") %>%
+  # Add cumulative pressure indicator
+  mutate(cumulative_ghg = ghg/sum(ghg),
+         cumulative_water = water/sum(water), 
+         cumulative_nutrient = nutrient/sum(nutrient),
+         cumulative_disturbance = disturbance/sum(disturbance)) %>%
+  mutate(cumulative_total = cumulative_ghg + cumulative_water + cumulative_nutrient + cumulative_disturbance) %>%
+  mutate(flow = case_when(
+    iso3_o == iso3_d ~ "domestic",
+    iso3_o != iso3_d ~ "foreign"
+  ))
+
+# Total per capita consumption versus per capita GDP
+total_stressor_percap <- stressor_trade_total %>%
+  group_by(iso3_d, country_d, region_d) %>%
+  summarise(tonnes = sum(tonnes), 
+            ghg = sum(ghg), 
+            water = sum(water), 
+            nutrient = sum(nutrient), 
+            disturbance = sum(disturbance), 
+            pc_gdp_d = mean(pc_gdp_d), 
+            pop_d = mean(pop_d)) %>%
+  mutate(tonnes_percap_d = tonnes/pop_d,
+         ghg_percap_d = ghg/pop_d,
+         water_percap_d = water/pop_d,
+         nutrient_percap_d = nutrient/pop_d,
+         disturbance_percap_d = disturbance/pop_d) %>%
+  ungroup() 
+
+# Internal consumption pressure per capita versus GDP per capita
+internal_stressor_percap <- stressor_trade_total %>%
+  filter(iso3_d == iso3_o) %>%
+  group_by(iso3_d, country_d, region_d, pc_gdp_d) %>%
+  summarise(tonnes = sum(tonnes), 
+            ghg = sum(ghg), 
+            water = sum(water), 
+            nutrient = sum(nutrient), 
+            disturbance = sum(disturbance), 
+            pc_gdp_d = mean(pc_gdp_d), 
+            pop_d = mean(pop_d)) %>%
+  mutate(tonnes_percap_d = tonnes/pop_d,
+         ghg_percap_d = ghg/pop_d,
+         water_percap_d = water/pop_d,
+         nutrient_percap_d = nutrient/pop_d,
+         disturbance_percap_d = disturbance/pop_d) %>%
+  ungroup()
+
+# Exported consumption pressure per capita versus GDP per capita
+exported_stressor_percap <- stressor_trade_total %>%
+  filter(iso3_d != iso3_o) %>%
+  group_by(iso3_d, country_d, region_d, pc_gdp_d) %>%
+  summarise(tonnes = sum(tonnes), 
+            ghg = sum(ghg), 
+            water = sum(water), 
+            nutrient = sum(nutrient), 
+            disturbance = sum(disturbance), 
+            pc_gdp_d = mean(pc_gdp_d), 
+            pop_d = mean(pop_d)) %>%
+  mutate(tonnes_percap_d = tonnes/pop_d,
+         ghg_percap_d = ghg/pop_d,
+         water_percap_d = water/pop_d,
+         nutrient_percap_d = nutrient/pop_d,
+         disturbance_percap_d = disturbance/pop_d) %>%
+  ungroup()
+
+# Read in World Bank development categories
+wb_dev_cats <- fread("data/WB_groups_clean.csv") %>%
+  select(-X) %>%
+  # Add numeric group
+  mutate(wb_numeric = case_when(
+    WB_group == "High Income" ~ 4, 
+    WB_group == "Upper Middle Income" ~ 3,
+    WB_group == "Lower Middle Income" ~ 2,
+    WB_group == "Low Income" ~ 1
+  ))
+
+# List pressure names
+pressures <- c("tonnes", "ghg", "water", "nutrient", "disturbance")
+
+# Set colors
+dist_1 <- "#D5BD75"
+dist_1 <- lighten(dist_1, amount = -0.05)
+dist_2 <- "#FFEAB1"
+dist_2 <- lighten(dist_2, amount = -0.05)
+
+ghg_1 <- "#DA6098"
+ghg_1 <- lighten(ghg_1, amount = -0.05)
+ghg_2 <- "#FFCEE0"
+ghg_2 <- lighten(ghg_2, amount = -0.05)
+nut_1 <- "#795B48"
+nut_2 <- "#E7C7B5"
+
+wat_1 <- "#3E638E"
+wat_2 <- "#C5F0FF"
+
+jv_palette <- c(dist_1, ghg_1, nut_1, wat_1,
+                dist_2, ghg_2, nut_2, wat_2)
+#scales::show_col(jv_palette, ncol = 4, labels = FALSE)
+
+
+pal_df <- as_tibble(jv_palette) %>% 
+  rename(fill_value = value) %>% 
+  mutate(pressure = case_when(fill_value == dist_1 ~ "domestic-disturbance",
+                            fill_value == dist_2 ~ "foreign-disturbance",
+                            fill_value == wat_1 ~ "domestic-water",
+                            fill_value == wat_2 ~ "foreign-water",
+                            fill_value == nut_1 ~ "domestic-nutrient",
+                            fill_value == nut_2 ~ "foreign-nutrient",
+                            fill_value == ghg_1 ~ "domestic-ghg",
+                            fill_value == ghg_2 ~ "foreign-ghg")) 
+
+color_order <- c(dist_1, ghg_1, wat_1, nut_1, dist_2, ghg_2, wat_2, nut_2)
+
+# Set themes
+circle_theme <- theme(axis.line=element_blank(),
+                      axis.text.y=element_blank(),
+                      axis.ticks=element_blank(),
+                      axis.title.x=element_blank(),
+                      axis.title.y=element_blank(),
+                      legend.position="none",
+                      # legend.position="left",
+                      panel.background=element_blank(),
+                      panel.border=element_blank(),
+                      panel.grid.major=element_blank(),
+                      panel.grid.minor=element_blank(),
+                      plot.background=element_blank(),
+                      axis.text.x = element_blank())
+
+```
+
+
+# Results
+## Unequal burden of food consumption footprints 
+### Figure 1
+Figure 1: Distribution of global food footprints. a) National per capita consumptive footprints by pressure. b) Internal and external total national footprints for countries with the highest total footprint within each region. 
+
+Figure goals: 
+Characterize the distribution of global production and consumption footprints, distinguishing countries’ internal and external footprints by food group.
+
+```{r}
+# Fig 1a per capita distribution
+# Percent falling within 50% of the median
+x <- 0.5
+
+median_box <- total_stressor_percap %>%
+  select(iso3_d, country_d, tonnes_percap_d:disturbance_percap_d) %>%
+  pivot_longer(cols = tonnes_percap_d:disturbance_percap_d, names_to = "pressure") %>%
+  group_by(pressure) %>%
+  summarise(value_median = median(value, na.rm = TRUE)) %>%
+  mutate(range_min = value_median - (x*value_median), 
+         range_max = value_median + (x*value_median))
+
+fig1a <- total_stressor_percap %>%
+  mutate(region_d = countrycode(iso3_d, origin = "iso3c", destination = "region")) %>%
+  select(iso3_d, country_d, region_d, tonnes_percap_d:disturbance_percap_d) %>%
+  pivot_longer(cols = tonnes_percap_d:disturbance_percap_d, names_to = "pressure") %>%
+  left_join(median_box, by = "pressure") %>%
+  separate(pressure, into = c("pressure", "drop1", "drop2"), sep = "_") %>%
+  select(-drop1, -drop2) %>%
+  #filter(pressure != "tonnes") %>%
+  mutate(pressure = factor(pressure, levels = c("disturbance", "ghg", "nutrient", "water", "tonnes"))) %>%
+  ggplot(aes(y = region_d, x = value, label = country_d)) +
+  geom_rect(aes(xmin = range_min, xmax = range_max, ymin = 0, ymax = 7, fill = pressure)) +
+  scale_fill_manual(values = c(color_order[1:4], "grey80")) +
+  geom_vline(aes(xintercept = value_median)) +
+  geom_jitter(alpha = 0.4, size = 0.8, height = 0.2) +
+  #geom_text_repel(min.segment.length = 0.1) +
+  labs(y = "") +
+  facet_wrap(~pressure, scales = "free", ncol = 1) +
+  theme_minimal() + 
+  theme(text = element_text(size = 8))
+fig1a
+
+
+# Plot of all counties without labels
+fig1b_df <- stressor_trade_total %>%
+  group_by(iso3_d, country_name_d, region_d, flow) %>%
+  summarise(cumulative_ghg =sum(cumulative_ghg), 
+            cumulative_water = sum(cumulative_water),
+            cumulative_nutrient = sum(cumulative_nutrient), 
+            cumulative_disturbance = sum(cumulative_disturbance)) %>%
+  pivot_longer(cumulative_ghg:cumulative_disturbance, names_to = c("drop", "pressure"), names_sep = "_", values_to = "value") %>%
+  select(-drop) %>%
+  mutate(plot_value = case_when(
+    flow == "foreign" ~ -1*value,
+    flow == "domestic" ~ value
+  )) %>% 
+  group_by(iso3_d, country_name_d, region_d) %>%
+  mutate(total_pressure = sum(value)) %>%
+  ungroup() 
+
+# Top 5 by region
+plot_countries <- fig1b_df %>%
+  select(iso3_d, region_d, total_pressure) %>%
+  distinct() %>%
+  group_by(region_d) %>%
+  slice_max(prop = 0.2, order_by = total_pressure) %>%
+  pull(iso3_d)
+
+# Global distribution excluding top countries
+fig1b_insert <- fig1b_df %>%
+  filter(!(iso3_d %in% c(plot_countries, "USA"))) %>%
+  group_by(region_d) %>%
+  mutate(iso3_d = fct_reorder(iso3_d, total_pressure),) %>%
+  mutate(region_d = factor(region_d, levels = c("East Asia & Pacific", "South Asia", "Europe & Central Asia", 
+                                            "Middle East & North Africa", "Sub-Saharan Africa", 
+                                            "Latin America & Caribbean", "North America")),
+         flow = factor(flow, levels = c("foreign", "domestic")),
+         pressure = factor(pressure, levels = c("disturbance", "ghg", "nutrient", "water"))) %>%
+  ggplot(aes(x = plot_value, y = iso3_d, fill = pressure)) +
+  geom_bar(position = "stack", stat = "identity") +
+  geom_vline(xintercept = 0) +
+  scale_x_continuous(expand = c(0.01, 0)) +
+  scale_fill_manual(values = color_order[1:4]) +
+  labs(x = "", y = "", title = "Rest of world") +
+  facet_grid(region_d~flow, scales = "free", space = "free", switch = "y") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.y=element_blank(),
+        axis.text.x = element_blank(),
+        strip.text.y = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        strip.background = element_blank(),
+        strip.text.x = element_blank(),
+        plot.title = element_text(size = 32))
+
+ggsave("outputs/fig1b_insert.png", fig1b_insert, width = 4, height = 5.5, units = "in", scale = 2)
+
+fig1b_main <-  fig1b_df %>%
+  filter(iso3_d %in% c(plot_countries, "USA")) %>%
+  group_by(region_d) %>%
+  mutate(iso3_d = fct_reorder(iso3_d, total_pressure),) %>%
+  mutate(region_d = factor(region_d, levels = c("East Asia & Pacific", "South Asia", "Europe & Central Asia", 
+                                            "Middle East & North Africa", "Sub-Saharan Africa", 
+                                            "Latin America & Caribbean", "North America")),
+         flow = factor(flow, levels = c("foreign", "domestic"))) %>%
+  ggplot(aes(x = plot_value, y = iso3_d, fill = pressure)) +
+  geom_bar(position = "stack", stat = "identity") +
+  geom_vline(xintercept = 0) +
+  scale_x_continuous(expand = c(0.01, 0)) +
+  scale_fill_manual(values = color_order[1:4]) +
+  labs(x = "Cumulative footprint", y = "", fill = "Pressure") +
+  facet_grid(region_d~flow, scales = "free", space = "free", switch = "y") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text.y.left = element_text(angle = 0),
+        strip.placement = "outside")
+
+ggsave("outputs/fig1b_main.png", fig1b_main, width = 4, height = 5.5, units = "in", scale = 2)
+
+fig1b_main <- ggdraw() + draw_image("outputs/fig1b_main.png")
+fig1b_insert <- ggdraw() + draw_image("outputs/fig1b_insert.png")
+
+fig1b <- fig1b_main + 
+  draw_image("outputs/fig1b_insert.png", x = .5, y = .1, width = 0.4, height = 0.4) 
+ggsave("outputs/fig1b.png", fig1b, width = 7, height = 4, units = "in")
+
+# Join Fig1a and Fib1b
+fig1 <- ggarrange(fig1a, fig1b, common.legend = TRUE, widths = c(0.4, 0.6))
+ggsave("outputs/fig1.png", fig1, width = 7, height = 5, units = "in")
+
+```
+
+### Results section 1 in text stats
+Global averages by pressure
+```{r}
+total_stressor_percap %>% 
+  summarise(tonnes = sum(tonnes, na.rm = TRUE), 
+            ghg = sum(ghg, na.rm = TRUE), 
+            water = sum(water, na.rm = TRUE), 
+            nutrient = sum(nutrient, na.rm = TRUE), 
+            disturbance = sum(disturbance, na.rm = TRUE), 
+            pop_d = sum(pop_d, na.rm = TRUE)) %>%
+  mutate(tonnes_percap_d = round(tonnes/pop_d, 2), 
+         ghg_percap_d = round(ghg/pop_d, 2), 
+         water_percap_d = round(water/pop_d, 1), 
+         nutrient_percap_d = round(nutrient/pop_d, 2), 
+         disturbance_percap_d = round(disturbance/pop_d, 3)) %>%
+  select(tonnes_percap_d:disturbance_percap_d) %>%
+  kable()
+```
+
+Number of countries falling beyond 50% of the median
+```{r}
+total_stressor_percap %>%
+  select(iso3_d, country_d, tonnes_percap_d:disturbance_percap_d) %>%
+  pivot_longer(cols = tonnes_percap_d:disturbance_percap_d, names_to = "pressure") %>%
+  filter(!is.na(value)) %>%
+  group_by(pressure) %>%
+  mutate(value_median = median(value, na.rm = TRUE)) %>%
+  mutate(range_min = value_median - (x*value_median), 
+         range_max = value_median + (x*value_median)) %>%
+  mutate(within_Xper_median = case_when(
+    ((value >= range_min)&(value <= range_max))~ paste("within ", 100*x, "% of the median", sep = ""), 
+    value > range_max ~ paste("above ", 100*x, "% of the median", sep = ""),
+    value < range_min ~ paste("below ", 100*x, "% of the median", sep = "")
+  )) %>%
+  group_by(pressure, within_Xper_median) %>%
+  tally() %>%
+  group_by(pressure) %>%
+  mutate(percent_within_Xper = round(100*n/sum(n), 0)) %>%
+  kable(col.names = c("Pressure", "Range", "N. Countries",
+                      "% Countries"))
+```
+
+90th percentile to 10th percentile ratio
+```{r}
+total_stressor_percap %>%
+  select(iso3_d, country_d, tonnes_percap_d:disturbance_percap_d) %>%
+  pivot_longer(cols = tonnes_percap_d:disturbance_percap_d, names_to = "pressure") %>%
+  filter(!is.na(value)) %>%
+  group_by(pressure) %>%
+  summarise(percentile_90 = quantile(value, probs = 0.9),
+         percentile_10 = quantile(value, probs = 0.1),
+         ratio = percentile_90/percentile_10) 
+```
+
+
+Share of countries and population responsible for 75% of pressures
+```{r}
+percent_threshold <- 75
+
+global_pop <- stressor_trade_total %>%
+  select(iso3_d, pop_d) %>%
+  distinct() %>%
+  summarise(total = sum(pop_d, na.rm = TRUE)) %>%
+  pull(total)
+
+total_stressor_percap %>%
+  select(iso3_d, country_d, ghg:disturbance) %>%
+  pivot_longer(cols = ghg:disturbance, names_to = "pressure") %>%
+  group_by(pressure) %>% 
+  mutate(rank = rank(-value)) %>% 
+  arrange(pressure, rank) %>% 
+  # add population data
+  left_join(stressor_trade_total %>%
+              select(iso3_d, pop_d) %>%
+              distinct(),
+            by = "iso3_d") %>%
+  mutate(percent = 100*value/sum(value), 
+         cumulative_percent = cumsum(percent), 
+         cumulative_pop = cumsum(pop_d),
+         cumulative_pop_percent = 100*cumulative_pop/global_pop) %>% 
+  filter(abs(cumulative_percent - percent_threshold) == min(abs(cumulative_percent - percent_threshold)))%>% 
+  slice_max(rank) %>% 
+  select(pressure, rank, cumulative_pop_percent) %>%
+  arrange(rank) %>%
+  kable(col.names = c("Pressure", paste("N. countries comprising ", percent_threshold, "% of global pressure", sep = ""), "Cumulative pop %"))
+```
+
+Top consumption pressure countries
+```{r}
+total_stressor_percap %>%
+  select(iso3_d, country_d, ghg:disturbance) %>%
+  pivot_longer(cols = ghg:disturbance, names_to = "pressure") %>%
+  group_by(pressure) %>% 
+  mutate(rank = rank(-value)) %>% 
+  arrange(pressure, rank) %>% 
+  mutate(percent = round(100*value/sum(value))) %>% 
+  slice_min(rank, n = 5) %>%
+  select(pressure, country_d, rank, percent) %>%
+  kable(col.names = c("Pressure", "Country", "Rank", "% of global total"))
+```
+
+Share of total food consumed domestically versus exported
+```{r}
+stressor_trade_total %>% 
+  group_by(flow) %>%
+  summarise(tonnes = sum(tonnes, na.rm = TRUE),
+            ghg = sum(ghg, na.rm = TRUE),
+            water = sum(water, na.rm = TRUE),
+            nutrient = sum(nutrient, na.rm = TRUE),
+            disturbance = sum(disturbance, na.rm = TRUE)) %>%
+  pivot_longer(tonnes:disturbance, names_to = "pressure", values_to = "value") %>%
+  group_by(pressure) %>%
+  mutate(percent = round(100*value/sum(value), 1)) %>%
+  select(-value) %>%
+  pivot_wider(names_from = flow, values_from = percent) %>%
+  kable(col.names = c("Pressure", "% consumed domestic", "% consumed foreign"))
+```
+
+Share of total food consumed domestically versus exported by food group
+```{r}
+stressor_trade_by_food %>% 
+  filter(!is.na(food_group)) %>%
+  group_by(flow, food_group) %>%
+  summarise(tonnes = sum(tonnes, na.rm = TRUE),
+            ghg = sum(ghg, na.rm = TRUE),
+            water = sum(water, na.rm = TRUE),
+            nutrient = sum(nutrient, na.rm = TRUE),
+            disturbance = sum(disturbance, na.rm = TRUE)) %>%
+  pivot_longer(tonnes:disturbance, names_to = "pressure", values_to = "value") %>%
+  group_by(pressure, food_group) %>%
+  mutate(percent = round(100*value/sum(value), 1)) %>%
+  select(pressure, food_group, flow, percent) %>%
+  pivot_wider(names_from = flow, values_from = percent) %>%
+  arrange(pressure, domestic) %>%
+  kable(col.names = c("Pressure", "Food group", "% domestic consumption", "% foreign consumption"))
+```
+
+Countries with lowest % external footprint
+```{r}
+stressor_trade_total %>% 
+  group_by(country_name_d, flow) %>%
+  summarise(tonnes = sum(tonnes, na.rm = TRUE)) %>%
+  mutate(percent = round(100*tonnes/sum(tonnes), 1)) %>%
+  select(-tonnes) %>%
+  pivot_wider(names_from = flow, values_from = percent) %>%
+  arrange(-domestic) %>%
+  kable(col.names = c("Consuming country", "% domestic", "% foreign"))
+```
+
+
+Countries with highest % external footprint
+```{r}
+stressor_trade_total %>% 
+  group_by(country_name_d, flow) %>%
+  summarise(tonnes = sum(tonnes, na.rm = TRUE)) %>%
+  mutate(percent = round(100*tonnes/sum(tonnes), 1)) %>%
+  select(-tonnes) %>%
+  pivot_wider(names_from = flow, values_from = percent) %>%
+  arrange(-foreign) %>%
+  kable(col.names = c("Consuming country", "% domestic", "% foreign"))
+```
+
+Countries with the highest share of production exported
+```{r}
+stressor_trade_total %>% 
+  group_by(country_name_o, flow) %>%
+  summarise(tonnes = sum(tonnes, na.rm = TRUE)) %>%
+  mutate(percent = round(100*tonnes/sum(tonnes), 1)) %>%
+  select(-tonnes) %>%
+  pivot_wider(names_from = flow, values_from = percent) %>%
+  arrange(-foreign) %>%
+  kable(col.names = c("Producing country", "% domestic", "% foreign"))
+```
+Countries with the lowest share of production exported
+```{r}
+stressor_trade_total %>% 
+  group_by(country_name_o, flow) %>%
+  summarise(tonnes = sum(tonnes, na.rm = TRUE)) %>%
+  mutate(percent = round(100*tonnes/sum(tonnes), 1)) %>%
+  select(-tonnes) %>%
+  pivot_wider(names_from = flow, values_from = percent) %>%
+  arrange(-domestic) %>%
+  kable(col.names = c("Producing country", "% domestic", "% foreign"))
+```
+
+## Wealth and the export of environmental pressures 
+### Figure 2
+```{r}
+# Set span for Loess smooth line
+set_span <- 25
+
+# Tonnes
+# Total 
+kuznets_total_tonnes <- total_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = tonnes_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  geom_text_repel(aes(label = iso3_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Tonnes per capita", color = "Region") +
+  theme_minimal()
+
+# Exported
+kuznets_external_tonnes <- exported_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = tonnes_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Tonnes per capita", color = "Region") +
+  theme_minimal()
+
+# Internal
+kuznets_internal_tonnes <- internal_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = tonnes_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Tonnes per capita", color = "Region") +
+  theme_minimal()
+
+# GHG
+# Total 
+kuznets_total_ghg <- total_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = ghg_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "GHG per capita", color = "Region") +
+  theme_minimal()
+
+# Exported
+kuznets_external_ghg <- exported_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = ghg_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "GHG per capita", color = "Region") +
+  theme_minimal()
+
+# Internal
+kuznets_internal_ghg <- internal_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = ghg_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "GHG per capita", color = "Region") +
+  theme_minimal()
+
+# Water
+# Total 
+kuznets_total_water <- total_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = water_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Water per capita", color = "Region") +
+  theme_minimal()
+
+# Exported
+kuznets_external_water <- exported_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = water_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Water per capita", color = "Region") +
+  theme_minimal()
+
+# Internal
+kuznets_internal_water <- internal_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = water_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Water per capita", color = "Region") +
+  theme_minimal()
+
+# Nutrients
+# Total 
+kuznets_total_nutrients <- total_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = nutrient_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Nutrient per capita", color = "Region") +
+  theme_minimal()
+
+# Exported
+kuznets_external_nutrients <- exported_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = nutrient_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Nutrient per capita", color = "Region") +
+  theme_minimal()
+
+# Internal
+kuznets_internal_nutrients <- internal_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = nutrient_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Nutrient per capita", color = "Region") +
+  theme_minimal()
+
+
+# Disturbance
+# Total 
+kuznets_total_disturbance <- total_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = disturbance_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Disturbance per capita", color = "Region") +
+  theme_minimal()
+
+# Exported
+kuznets_external_disturbance <- exported_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = disturbance_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) + 
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Disturbance per capita", color = "Region") +
+  theme_minimal()
+
+# Internal
+kuznets_internal_disturbance <- internal_stressor_percap %>%
+  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
+  ggplot(aes(x = pc_gdp_d, y = disturbance_percap_d)) +
+  geom_point(aes(color = region_d)) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
+  geom_text_repel(aes(label = iso3_d)) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "GDP per capita (1000)", y = "Disturbance per capita", color = "Region") +
+  theme_minimal()
+
+fig2 <- ggarrange(kuznets_total_ghg, kuznets_total_water, 
+                            kuznets_total_nutrients, kuznets_total_disturbance,
+                            kuznets_external_ghg, kuznets_external_water,
+                            kuznets_external_nutrients, kuznets_external_disturbance,
+          ncol = 4, nrow = 2, heights = c(rep(3, 8)), widths = c(rep(1, 8)),
+          labels = c("GHG total", "Water total", "Nutrients total", "Disturbance total", 
+                     "GHG external", "Water external", "Nutrients external", "Disturbance external"),
+          font.label = list(size = 10, color = "black", face = "bold", family = NULL),
+          vjust = 1, common.legend = TRUE, legend = "bottom")
+
+fig2
+
+ggsave("outputs/fig2.png", fig2, width = 12, height = 6, units = "in")
+```
+
+### Results section 2 in text stats
+
+Patterns of countries driving peak and downward portion of curve
+```{r}
+stressor_trade_total %>% 
+  select(iso3_o, region_o, total_land_o, agriculture_land_o, pc_gdp_o) %>%
+  distinct() %>%
+  mutate(land_percap = total_land_o/pc_gdp_o, 
+         ag_land_percap = agriculture_land_o/pc_gdp_o,
+         land_percap_rank = rank(land_percap), 
+         ag_percap_rank = rank(ag_land_percap)) %>%
+  mutate(group = case_when(
+    iso3_o %in% c("ARE", "QAT", "SGP", "BRN", "SYC") ~ "above",
+    iso3_o %in% c("TWN", "CHE", "SWE", "NOR", "USA", "AUS", "DNK") ~ "below"
+  )) %>%
+  filter(!is.na(group)) %>%
+  select(-pc_gdp_o) %>%
+  kable(col.names = c("ISO3c", "Region", "Land", "Ag Land", "Land per cap", "Ag land per cap", "Land per cap rank", "Ag land per cap rank", "Curve position"))
+
+percap_gdp_percentile <- stressor_trade_total %>% 
+  select(iso3_d, gdp_d, pop_d) %>%
+  distinct() %>%
+  mutate(gdp_pc = gdp_d/pop_d) %>%
+  arrange(-gdp_pc) 
+
+quantile(percap_gdp_percentile$gdp_pc, seq(0.9, 1, 0.01), na.rm = TRUE)
+```
+
+
+## Environmental justice and the export of food footprints
+### Figure 3
+```{r}
+sankey_pal <- c("#F37542", "#F7AF75", "#86ADA7", "#1B708F")
+
+dev_cat_flows <- stressor_trade_by_food %>%
+    filter(!is.na(food_group)) %>%
+  filter(iso3_o != iso3_d) %>%
+  left_join(wb_dev_cats %>%
+              rename("iso3_o" = "iso3c",
+                     "wb_group_o" = "WB_group", 
+                     "wb_numeric_o" = "wb_numeric"), 
+            by = "iso3_o") %>%
+    left_join(wb_dev_cats %>%
+              rename("iso3_d" = "iso3c",
+                     "wb_group_d" = "WB_group",
+                     "wb_numeric_d" = "wb_numeric"), 
+            by = "iso3_d") %>%
+    mutate(flow_direction = case_when(
+      wb_numeric_o == wb_numeric_d ~ "no change",
+      wb_numeric_o > wb_numeric_d ~ "from higher dev cat to lower",
+      wb_numeric_o < wb_numeric_d ~ "from lower dev cat to higher"
+    )) %>%
+  # FIXIT: Cook Islands and Niue are missing WB Dev status values
+  filter(!is.na(flow_direction))
+
+  
+dev_cat_flows_sankey <- dev_cat_flows %>%
+  group_by(wb_group_o, wb_group_d, flow_direction) %>%
+  summarise(tonnes = sum(tonnes), 
+            ghg = sum(ghg), 
+            water = sum(water), 
+            nutrient = sum(nutrient), 
+            disturbance = sum(disturbance)) %>%
+  ungroup()
+
+# Tonnes
+tonnes_dev_sankey <- dev_cat_flows_sankey %>% 
+  make_long(wb_group_o, wb_group_d, value = tonnes) %>%
+  mutate(node = factor(node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income")),
+         next_node = factor(next_node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income"))) %>%
+  ggplot(aes(x = x, next_x = next_x, 
+            node = node, next_node = next_node, 
+            value = value,
+            fill = factor(node),
+            label = node)) +
+  geom_sankey(flow.alpha = 0.6) +
+  geom_sankey_label(size = 3, color = "white", fill = "gray40") +
+  scale_x_discrete(labels = c("Producer", "Consumer")) +
+  scale_fill_manual(values = sankey_pal) +
+  labs(x = NULL) +
+  theme_sankey(base_size = 18) +
+  theme(legend.position = "none")  +
+  ggtitle("Tonnes")
+
+
+# GHG
+ghg_dev_sankey <- dev_cat_flows_sankey %>% 
+  make_long(wb_group_o, wb_group_d, value = ghg) %>%
+  mutate(node = factor(node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income")),
+         next_node = factor(next_node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income"))) %>%
+  ggplot(aes(x = x, next_x = next_x, 
+            node = node, next_node = next_node, 
+            value = value,
+            fill = factor(node),
+            label = node)) +
+  geom_sankey(flow.alpha = 0.6) +
+  geom_sankey_label(size = 3, color = "white", fill = "gray40") +
+  scale_x_discrete(labels = c("Producer", "Consumer")) +
+  scale_fill_manual(values = sankey_pal) +
+  labs(x = NULL) +
+  theme_sankey(base_size = 18) +
+  theme(legend.position = "none")  
+
+# Water
+water_dev_sankey <- dev_cat_flows_sankey %>% 
+  make_long(wb_group_o, wb_group_d, value = water) %>%
+  mutate(node = factor(node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income")),
+         next_node = factor(next_node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income"))) %>%
+  ggplot(aes(x = x, next_x = next_x, 
+            node = node, next_node = next_node, 
+            value = value,
+            fill = factor(node),
+            label = node)) +
+  geom_sankey(flow.alpha = 0.6) +
+  geom_sankey_label(size = 3, color = "white", fill = "gray40") +
+  scale_x_discrete(labels = c("Producer", "Consumer")) +
+  scale_fill_manual(values = sankey_pal) +
+  labs(x = NULL) +
+  theme_sankey(base_size = 18) +
+  theme(legend.position = "none") 
+
+
+# Nutrient
+nutrient_dev_sankey <- dev_cat_flows_sankey %>% 
+  make_long(wb_group_o, wb_group_d, value = nutrient) %>%
+  mutate(node = factor(node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income")),
+         next_node = factor(next_node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income"))) %>%
+  ggplot(aes(x = x, next_x = next_x, 
+            node = node, next_node = next_node, 
+            value = value,
+            fill = factor(node),
+            label = node)) +
+  geom_sankey(flow.alpha = 0.6) +
+  geom_sankey_label(size = 3, color = "white", fill = "gray40") +
+  scale_x_discrete(labels = c("Producer", "Consumer")) +
+  scale_fill_manual(values = sankey_pal) +
+  labs(x = NULL) +
+  theme_sankey(base_size = 18) +
+  theme(legend.position = "none")  
+
+# Disturbance
+disturbance_dev_sankey <- dev_cat_flows_sankey %>% 
+  make_long(wb_group_o, wb_group_d, value = disturbance) %>%
+  mutate(node = factor(node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income")),
+         next_node = factor(next_node, levels = c("Low Income", "Lower Middle Income", "Upper Middle Income", "High Income"))) %>%
+  ggplot(aes(x = x, next_x = next_x, 
+            node = node, next_node = next_node, 
+            value = value,
+            fill = factor(node),
+            label = node)) +
+  geom_sankey(flow.alpha = 0.6) +
+  geom_sankey_label(size = 3, color = "white", fill = "gray40") +
+  scale_x_discrete(labels = c("Producer", "Consumer")) +
+  scale_fill_manual(values = sankey_pal) +
+  labs(x = NULL) +
+  theme_sankey(base_size = 18) +
+  theme(legend.position = "none")
+
+fig3 <- ggarrange(ghg_dev_sankey, water_dev_sankey, nutrient_dev_sankey, disturbance_dev_sankey, 
+                  labels = c("GHG", "Water", "Nutrients", "Disturbance"))
+fig3
+
+ggsave(filename = "outputs/fig3.png", fig3, width = 8, height = 8, units = "in")
+```
+```{r, eval=FALSE}
+# Try a correlation matrix for flows across categories per Kirsty's request
+dev_cat_flows_percap <- dev_cat_flows %>%
+  group_by(iso3_o, wb_group_o, wb_numeric_o, iso3_d, wb_group_d, wb_numeric_d) %>%
+  summarise(ghg = sum(ghg, na.rm = TRUE), 
+            water = sum(water, na.rm = TRUE), 
+            nutrient = sum(nutrient, na.rm = TRUE), 
+            disturbance = sum(disturbance, na.rm = TRUE)) %>%
+  ungroup() %>% 
+    left_join(total_stressor_percap %>%
+              select("iso3_o" = "iso3_d", "ghg_percap_o" = "ghg_percap_d", 
+                     "water_percap_o" = "water_percap_d", 
+                     "nutrient_percap_o" = "nutrient_percap_d", 
+                     "disturbance_percap_o" = "disturbance_percap_d"), 
+            by = "iso3_o") %>%
+  left_join(total_stressor_percap %>%
+              select(iso3_d, ghg_percap_d, water_percap_d, 
+                     nutrient_percap_d, disturbance_percap_d), 
+            by = "iso3_d")
+
+dev_cat_flows_percap %>%
+  ggplot(aes(x = ghg_percap_o, y = ghg_percap_d, size = ghg)) + 
+  geom_point(alpha = 0.25) +
+  facet_grid(wb_group_o~wb_group_d) + 
+  theme_minimal()
+
+dev_cat_flows_percap %>%
+  select(-ghg, -water, -nutrient, -disturbance) %>%
+  pivot_longer(ghg_percap_o:disturbance_percap_d, names_to = c("pressure", "drop", "origin_destination"), names_sep = "_") %>%
+  mutate(origin_destination = case_when(
+    origin_destination == "o" ~ "Origin", 
+    origin_destination == "d" ~ "Destination"),
+    origin_destination = factor(origin_destination, levels = c("Origin", "Destination")),
+    wb_group_o = factor(wb_group_o, levels = c("High Income", "Upper Middle Income",
+                                               "Lower Middle Income", "Low Income")),
+    wb_group_d = factor(wb_group_d, levels = c("High Income", "Upper Middle Income",
+                                               "Lower Middle Income", "Low Income"))) %>%
+  ggplot(aes(x = origin_destination, y = value)) + 
+  geom_jitter(alpha = 0.1) +
+  geom_violin() +
+  facet_grid(wb_group_o~wb_group_d) + 
+  theme_minimal()
+```
+
+
+
+### Figure 4
+
+Gravity methods text
+
+Gravity models are inspired by Newton law of gravitation, where bilateral trade (analogous to the force $X$) is predicted by the "masses" (e.g., GDP) of the origin ($i$) and destination ($j$) economies ($Y_i$ and $Y_j$ and is inversely proportional to the square of their distance ($D_{ij}$. Note that $G$ is a constant. 
+$$X_{ij} = G \frac{Y^{\beta_1}_iY^{\beta_2}_j}{D^2_{ij}}$$
+Additional covariates which represent factors that add friction to or facilitate trade (e.g., belonging to a regional trade agreement or sharing a common language) are commonly included in gravity models. Bilateral variables, such as sharing a common border, can be added to the model as a vector ($Z_{ij}$), along with importer fixed effect ($\eta_j$) and exporter fixed effects ($\gamma_i$) to yield a model which can be fit with poisson pseudo maximum likelihood: 
+
+$$X_{ij} = exp[\gamma_i + \eta_j + \beta Z_{ij}] + \epsilon_{ij}$$
+The model covariates are defined in the data section. We fit the model with a poisson pseudo maximum likelihood function as it represents a multiplicative form of the gravity model, which avoids the issues of evaluating log-linearized gravity models in the presence of zeros and it is more robust in the face of heteroscedasticity, which is common for trade data (Santos Silva and Tenreyro, 2006). 
+
+All variables entering the gravity model were min-max normalized to allow comparison of coefficients on the same scale and to ensure the normalized values remained positive. We fit the gravity model with a poisson pseudo maximum likelihood estimator in R using the ppml() function in the gravity (version 1.1) package. 
+
+```{r}
+# Set model variables
+regressor_list <- c("log_gdp_o", "log_gdp_d",
+                    "contig", 
+                    "rta", "comlang_off",
+                    "heg_o", "heg_d",
+                     "mean_education_o", "mean_education_d",
+                     "per_food_insecure_o", "per_food_insecure_d",
+                     "pc_gdp_o", "pc_gdp_d",
+                     "sigi_o", "sigi_d", "climate_policy_o", "climate_policy_d",
+                     "total_land_o", "total_land_d",
+                     "agriculture_land_o", "agriculture_land_d",
+                     "eez_total_o", "eez_total_d",
+                     "total_renewable_water_o", "total_renewable_water_d"
+                    )
+
+# Normalize data as cumulative pressure
+df_standardized <- stressor_trade_total %>%
+  mutate(log_gdp_o = log(gdp_o),
+         log_gdp_d = log(gdp_d)) %>%
+  select(ghg, water, nutrient, disturbance,
+         all_of(regressor_list), dist) %>%
+  mutate(across(everything(), ~./max(.)))
+
+# Set of regressors for main model
+regressor_list <- c("log_gdp_o", "log_gdp_d",
+                    "contig", 
+                    "rta", "comlang_off",
+                    "heg_o", "heg_d",
+                     "mean_education_o", "mean_education_d",
+                     "per_food_insecure_o", "per_food_insecure_d",
+                     "pc_gdp_o", "pc_gdp_d",
+                     "sigi_o", "sigi_d", "climate_policy_o", "climate_policy_d",
+                     #"total_land_o", "total_land_d",
+                    "eez_total_o", "eez_total_d",
+                     "total_renewable_water_o", "total_renewable_water_d"
+                    )
+
+# Total trade
+## Total trade, ghg pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "ghg", 
+                      regressors = regressor_list, model_name = "total, ghg")
+# Write over data frame to store parameters from new model
+fit_df_combined <- fit_df
+
+## Total trade, water pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "water", 
+                      regressors = regressor_list, model_name = "total, water")
+fit_df_combined <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+## Total trade, nutrient pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "nutrient", 
+                      regressors = regressor_list, model_name = "total, nutrient")
+fit_df_combined <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+## Total trade, disturbance pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "disturbance", 
+                      regressors = regressor_list, model_name = "total, disturbance")
+fit_df_combined_full <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+
+fig4 <- fit_df_combined_full %>%
+  filter(str_detect(model_name, pattern = "total"),
+         regressor != "intercept") %>%
+  mutate(regressor = factor(regressor, 
+                            levels = c(
+                              # Gravity variables
+                              "dist_log", "contig", "log_gdp_o", "log_gdp_d", "rta", "comlang_off",
+                              # Social variables
+                              "heg_o", "heg_d", "mean_education_o", "mean_education_d", "pc_gdp_o", "pc_gdp_d",
+                              "per_food_insecure_o", "per_food_insecure_d", 
+                              "sigi_o", "sigi_d", 
+                              # Policy
+                              "climate_policy_o", "climate_policy_d",
+                              # Environmental/resource
+                              #"total_land_o", "total_land_d", 
+                              "eez_total_o", "eez_total_d", 
+                              "total_renewable_water_o", "total_renewable_water_d"),
+                            labels = c(
+                              # Gravity variables
+                              "Distance", "Contiguous", "GDP, origin", "GDP, destination", 
+                              "Regional trade agreement", "Common official language",
+                              # Social variables
+                              "Hegemon, origin", "Hegemon, destination", "Education, origin", "Education, destination", 
+                              "GDP per cap, origin", "GDP per cap, destination",
+                              "Food insecurity, origin", "Food insecurity, destination", 
+                              "SIGI, origin", "SIGI, destination", 
+                              # Policy
+                              "Climate policy, origin", "Climate policy, destination",
+                              # Environmental/resource
+                              #"Total land, origin", "Total land, destination", 
+                              "EEZ area, origin", "EEZ area, destination", 
+                              "Renewable water, origin", "Renewable water, destination"))) %>%
+    ggplot() +
+    geom_segment(aes(x = estimate, xend=0, y = regressor, yend = regressor, 
+                     color = significance)) +
+    geom_point(aes(x = estimate, y = regressor, 
+                   color = significance)) +
+  geom_label(aes(x = 18, y = 21.5, label = paste("R² = ", round(r2, 2))), size = 3) +
+    scale_color_manual(values = c("#A5D4EB", "#2E84C5")) +
+    labs(y = "", color = "") +
+    theme_bw() +
+  theme(legend.position = "bottom") +
+  facet_wrap(~model_name, nrow = 1)
+
+fig4
+
+ggsave(filename = "outputs/Fig4.png", fig4, width = 8, height = 4)
+```
+
+### Figure 5
+
+```{r}
+# USA imports of cumulative pressures
+usa_import <- stressor_trade_total %>%
+  filter(iso3_o != iso3_d) %>%
+  filter(iso3_d == "USA") %>%
+  plot_map(pressure = "cumulative_total", arrow_label = "Cumulative \n pressure")
+
+usa_pressure_sourcing <- dev_cat_flows %>%
+  filter(iso3_o != iso3_d) %>%
+  filter(iso3_d == "USA") %>%
+  group_by(wb_group_o, food_group) %>%
+  summarise(cumulative_ghg = sum(cumulative_ghg), 
+            cumulative_water = sum(cumulative_water), 
+            cumulative_nutrient = sum(cumulative_nutrient), 
+            cumulative_disturbance = sum(cumulative_disturbance)) %>%
+  pivot_longer(cumulative_ghg:cumulative_disturbance, names_to = c("drop", "pressure"), names_sep = "_",
+               values_to = "value") %>%
+  mutate(wb_group_o = factor(wb_group_o, levels = c("Low Income", 
+                                                    "Lower Middle Income", 
+                                                    "Upper Middle Income", 
+                                                    "High Income")),
+         pressure = paste(toupper(substring(pressure, 1, 1)), substring(pressure, 2), sep = "")) %>%
+  ggplot(aes(x = value, fill = food_group, y = wb_group_o)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = color_order) +
+  labs(y = "", x = "Cumulative pressure", fill = "") +
+  facet_wrap(~pressure, nrow = 1) +
+  guides(fill=guide_legend(nrow=2,byrow=TRUE)) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+# India exports of cumulative pressures
+ind_export <- stressor_trade_total %>%
+  filter(iso3_o != iso3_d) %>%
+  filter(iso3_o == "IND") %>%
+  plot_map(pressure = "cumulative_total", arrow_label = "Cumulative \n pressure")
+
+ind_pressure_destination <- dev_cat_flows %>%
+  filter(iso3_o != iso3_d) %>%
+  filter(iso3_o == "IND") %>%
+  group_by(wb_group_d, food_group) %>%
+  summarise(cumulative_ghg = sum(cumulative_ghg), 
+            cumulative_water = sum(cumulative_water), 
+            cumulative_nutrient = sum(cumulative_nutrient), 
+            cumulative_disturbance = sum(cumulative_disturbance)) %>%
+  pivot_longer(cumulative_ghg:cumulative_disturbance, names_to = c("drop", "pressure"), names_sep = "_",
+               values_to = "value") %>%
+  mutate(wb_group_d = factor(wb_group_d, levels = c("Low Income", 
+                                                    "Lower Middle Income", 
+                                                    "Upper Middle Income", 
+                                                    "High Income")),
+         pressure = paste(toupper(substring(pressure, 1, 1)), substring(pressure, 2), sep = "")) %>%
+  ggplot(aes(x = value, fill = food_group, y = wb_group_d)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = color_order) +
+  labs(y = "", x = "Cumulative pressure", fill = "") +
+  facet_wrap(~pressure, nrow = 1) +
+  guides(fill=guide_legend(nrow=2,byrow=TRUE)) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+fig5 <- ggarrange(ggarrange(usa_import, ind_export, 
+                    common.legend = TRUE, nrow = 2, labels = c("a", "c")), 
+          ggarrange(usa_pressure_sourcing, ind_pressure_destination, 
+                    common.legend = TRUE, nrow = 2, labels = c("b", "d"), 
+                    legend = "bottom"),
+          ncol = 2, widths = c(0.6, 0.4))
+fig5
+
+ggsave(filename = "outputs/Fig5.png", fig5, width = 12, height = 8)
+
+```
+
+### Results section 3 in text stats
+```{r}
+# Case study summary stats
+# USA import percent from a lower dev category
+dev_cat_flows %>%
+  filter(iso3_o != iso3_d) %>%
+  filter(iso3_d == "USA") %>%
+  ungroup() %>%
+  group_by(flow_direction) %>% 
+  summarise(cumulative_total = sum(cumulative_total)) %>%
+  ungroup() %>%
+  mutate(percent = 100*cumulative_total/sum(cumulative_total)) %>%
+  kable(col.names = c("Flow direction", "Cumulative footprint", "Percent"))
+
+# USA import percent from a lower dev category, by food
+dev_cat_flows %>%
+  filter(iso3_o != iso3_d) %>%
+  filter(iso3_d == "USA") %>%
+  ungroup() %>%
+  group_by(flow_direction, food_group) %>% 
+  summarise(cumulative_total = sum(cumulative_total)) %>%
+  ungroup() %>%
+  mutate(percent = round(100*cumulative_total/sum(cumulative_total), 1)) %>%
+  select(-cumulative_total) %>%
+  pivot_wider(names_from = food_group, values_from = percent) %>%
+  kable(col.names = c("Flow direction", "% Crops", "% Fisheries and aquaculture", "% Livestock"),
+        digits = 1)
+
+
+# Case study summary stats
+# IND export percent to a higher dev category
+dev_cat_flows %>%
+  filter(iso3_o != iso3_d) %>%
+  filter(iso3_o == "IND") %>%
+  ungroup() %>%
+  group_by(flow_direction) %>% 
+  summarise(cumulative_total = sum(cumulative_total)) %>%
+  ungroup() %>%
+  mutate(percent = 100*cumulative_total/sum(cumulative_total)) %>%
+  kable(col.names = c("Flow direction", "Cumulative footprint", "Percent"))
+
+# IND export percent to a higher dev category, by food
+dev_cat_flows %>%
+  filter(iso3_o != iso3_d) %>%
+  filter(iso3_o == "IND") %>%
+  ungroup() %>%
+  group_by(flow_direction, food_group) %>% 
+  summarise(cumulative_total = sum(cumulative_total)) %>%
+  ungroup() %>%
+  mutate(percent = 100*cumulative_total/sum(cumulative_total)) %>%
+  select(-cumulative_total) %>%
+  pivot_wider(names_from = food_group, values_from = percent)  %>%
+  kable(col.names = c("Flow direction", "% Crops", "% Fisheries and aquaculture", "% Livestock"),
+        digits = 1)
+
+# India's total production footprint
+ind_total_prod <- stressor_trade_total %>%
+  filter(iso3_o == "IND") %>%
+  summarise(cumulative_total = sum(cumulative_total, na.rm = TRUE)) %>%
+  pull(cumulative_total)
+
+ind_low_to_high <- dev_cat_flows %>%
+  filter(iso3_o != iso3_d) %>%
+  filter(iso3_o == "IND", flow_direction == "from lower dev cat to higher") %>%
+  summarise(cumulative_total = sum(cumulative_total)) %>%
+  pull(cumulative_total)
+
+ind_internal <- stressor_trade_total %>%
+  filter(iso3_o == "IND", iso3_o == iso3_d) %>%
+  summarise(cumulative_total = sum(cumulative_total)) %>%
+  pull(cumulative_total)
+
+```
+
+India is a lower middle income country and 65% of its cumulative pressures are associated with food exports consumed by higher income countries, representing `r round(100*ind_low_to_high/ind_total_prod, 1)`% of India’s overall food production footprint, as `r round(100*ind_internal/ind_total_prod,1)`% of India's production footprint is associated with domestic consumption.
+
+# Supplementary Figures
+## SI Figure 1 - Internal and external consumption footprint circular bar plot
+```{r}
+# Data for consumer and producer circle bar plots
+# Create data frame with cumulative pressures, summed by producer and consumer
+circle_barplot_df <- stressor_trade_total %>%
+  select(iso3_o, country_name_o, region_o, iso3_d, country_name_d, region_d, flow, contains("cumulative")) 
+
+circle_barplot_df_producer <- circle_barplot_df %>% 
+  group_by(iso3_o, country_name_o, region_o, flow) %>%
+  summarise(cumulative_ghg = sum(cumulative_ghg),
+            cumulative_water = sum(cumulative_water),
+            cumulative_nutrient = sum(cumulative_nutrient), 
+            cumulative_disturbance = sum(cumulative_disturbance),
+            cumulative_total = sum(cumulative_total)) %>%
+  ungroup() %>%
+  pivot_longer(cumulative_ghg:cumulative_total, 
+               names_to = c("drop", "pressure"), 
+               values_to = "cumulative_pressure", 
+               names_sep = "_") %>%
+  select(-drop)
+
+circle_barplot_df_consumer <- circle_barplot_df %>% 
+  group_by(iso3_d, country_name_d, region_d, flow) %>%
+  summarise(cumulative_ghg = sum(cumulative_ghg),
+            cumulative_water = sum(cumulative_water),
+            cumulative_nutrient = sum(cumulative_nutrient), 
+            cumulative_disturbance = sum(cumulative_disturbance),
+            cumulative_total = sum(cumulative_total)) %>%
+  ungroup() %>%
+  pivot_longer(cumulative_ghg:cumulative_total, 
+               names_to = c("drop", "pressure"), 
+               values_to = "cumulative_pressure", 
+               names_sep = "_") %>%
+  select(-drop)
+```
+
+
+```{r, fig.height= 6, fig.width= 12}
+# Set top_n value
+top_n <- 20
+
+# Select top consumer countries 
+top_consumers <- circle_barplot_df_consumer %>% 
+  filter(pressure == "total") %>%
+  group_by(iso3_d) %>% 
+  summarise(cumulative_pressure = sum(cumulative_pressure)) %>%
+  slice_max(order_by = cumulative_pressure, n = top_n) %>%
+  pull(iso3_d)
+
+# Plot separate plot of top countries so the scale isn't squished for the others
+top_consumer_barplot <- circle_barplot_df_consumer %>%
+  filter(iso3_d %in% top_consumers) %>%
+  mutate(country_name_d = reorder(country_name_d, cumulative_pressure)) %>%
+  filter(pressure != "total") %>%
+  mutate(pressure = paste(flow, "-", pressure, sep = "")) %>%
+  ggplot(aes(y = country_name_d, x = cumulative_pressure, fill = pressure)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = color_order) +
+  labs(x = "Cumulative pressure", y = "") +
+  theme_minimal()
+
+# Create data frames for labeling
+consumer_labels_df <- circle_barplot_df_consumer %>%
+  filter(!(iso3_d %in% top_consumers)) %>% 
+  filter(pressure == "total") %>%
+  group_by(country_name_d, region_d) %>%
+  summarise(cumulative_pressure = sum(cumulative_pressure)) %>%
+  arrange(region_d, cumulative_pressure)
+
+sequence_length = length(unique(consumer_labels_df$country_name_d))
+first_sequence = c(1:(sequence_length%/%2)) 
+second_sequence = c((sequence_length%/%2+1):sequence_length) 
+first_angles = c(90 - 180/length(first_sequence) * first_sequence)
+second_angles = c(-90 - 180/length(second_sequence) * second_sequence)
+consumer_labels_df$angle <- c(first_angles, second_angles)
+consumer_labels_df$hjust <- c(rep(0, length(first_sequence)), 
+                    rep(1, length(second_sequence)))
+
+
+# Plot circle plot
+consumer_circle_barplot <- circle_barplot_df_consumer %>%
+  filter(!(iso3_d %in% top_consumers)) %>%
+  group_by(region_d) %>%
+  mutate(country_name_d = reorder(country_name_d, cumulative_pressure)) %>%
+  filter(pressure != "total") %>%
+  mutate(pressure = paste(flow, "-", pressure, sep = "")) %>%
+  ggplot(aes(x = country_name_d, y = cumulative_pressure, fill = pressure)) +
+  geom_bar(stat = "identity", position = "stack") +
+  # this adjust the inner circle size (ymin) and outer circle size (ymax), which can be expanded to include names
+   geom_errorbar(aes(
+       x     = 1, 
+        ymin = (-0.01),  
+       ymax  = 0.00875),  
+       alpha = 0) +
+  # Add country labels
+  geom_text(data = consumer_labels_df,
+       aes(x     = country_name_d,
+           y     = max(cumulative_pressure, na.rm = TRUE),
+           label = country_name_d,
+           angle = angle,
+           hjust = hjust), 
+       inherit.aes = FALSE,
+       fontface = "bold",
+       alpha = 0.9,
+       size = 2,
+       color = "grey40") +
+  scale_fill_manual(values = color_order) +
+  labs(x = "Cumulative pressure", y = "") +
+  coord_polar() +
+  circle_theme
+
+si_fig1 <- ggarrange(consumer_circle_barplot, top_consumer_barplot, widths = c(0.7, 0.3),
+                     labels = c("a", "b"))
+si_fig1
+
+ggsave(filename = "outputs/SIFig1.png", si_fig1, width = 16, height = 10, units = "in")
+  
+```
+
+
+## SI Figure 2 - Internal and external production footprint circular bar plot
+
+```{r, fig.height= 6, fig.width= 12}
+# Select top producer countries 
+top_producers <- circle_barplot_df_producer %>% 
+  filter(pressure == "total") %>%
+  group_by(iso3_o) %>% 
+  summarise(cumulative_pressure = sum(cumulative_pressure)) %>%
+  slice_max(order_by = cumulative_pressure, n = top_n) %>%
+  pull(iso3_o)
+
+# Plot separate plot of top countries so the scale isn't squished for the others
+top_producer_barplot <- circle_barplot_df_producer %>%
+  filter(iso3_o %in% top_producers) %>%
+  mutate(country_name_o = reorder(country_name_o, cumulative_pressure)) %>%
+  filter(pressure != "total") %>%
+  mutate(pressure = paste(flow, "-", pressure, sep = "")) %>%
+  ggplot(aes(y = country_name_o, x = cumulative_pressure, fill = pressure)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = color_order) +
+  labs(x = "Cumulative pressure", y = "") +
+  theme_minimal()
+
+top_producer_barplot
+
+# Create data frames for labeling
+producer_labels_df <- circle_barplot_df_producer %>%
+  filter(!(iso3_o %in% top_producers)) %>% 
+  filter(pressure == "total") %>%
+  group_by(country_name_o, region_o) %>%
+  summarise(cumulative_pressure = sum(cumulative_pressure)) %>%
+  arrange(region_o, cumulative_pressure)
+
+sequence_length = length(unique(producer_labels_df$country_name_o))
+first_sequence = c(1:(sequence_length%/%2)) 
+second_sequence = c((sequence_length%/%2+1):sequence_length) 
+first_angles = c(90 - 180/length(first_sequence) * first_sequence)
+second_angles = c(-90 - 180/length(second_sequence) * second_sequence)
+producer_labels_df$angle <- c(first_angles, second_angles)
+producer_labels_df$hjust <- c(rep(0, length(first_sequence)), 
+                    rep(1, length(second_sequence)))
+
+
+# Plot circle plot
+producer_circle_barplot <- circle_barplot_df_producer %>%
+  filter(!(iso3_o %in% top_producers)) %>%
+  group_by(region_o) %>%
+  mutate(country_name_o = reorder(country_name_o, cumulative_pressure)) %>%
+  filter(pressure != "total") %>%
+  mutate(pressure = paste(flow, "-", pressure, sep = "")) %>%
+  ggplot(aes(x = country_name_o, y = cumulative_pressure, fill = pressure)) +
+  geom_bar(stat = "identity", position = "stack") +
+  # this adjust the inner circle size (ymin) and outer circle size (ymax), which can be expanded to include names
+   geom_errorbar(aes(
+       x     = 1, 
+        ymin = (-0.01),  
+       ymax  = 0.00875),  
+       alpha = 0) +
+  # Add country labels
+  geom_text(data = producer_labels_df,
+       aes(x     = country_name_o,
+           y     = max(cumulative_pressure, na.rm = TRUE),
+           label = country_name_o,
+           angle = angle,
+           hjust = hjust), 
+       inherit.aes = FALSE,
+       fontface = "bold",
+       alpha = 0.9,
+       size = 2,
+       color = "grey40") +
+  scale_fill_manual(values = color_order) +
+  labs(x = "Cumulative pressure", y = "") +
+  coord_polar() +
+  circle_theme
+
+si_fig2 <- ggarrange(producer_circle_barplot, top_producer_barplot, widths = c(0.7, 0.3),
+                     labels = c("a", "b"))
+si_fig2
+
+ggsave(filename = "outputs/SIFig2.png", si_fig2, width = 16, height = 10, units = "in")
+```
+
+## SI Table 1: relationship of production, consumption and export footprints with GDP
+
+To test for the presence of a Kuznets curve, we followed Lind and Mehlum (2009), which requires that a curve have a significant quadratic term, that the curve is concave down, and that the maximum occurs within the relevant range, in this case, of per capita GDP. Therefore, to test for evidence of a Kuznets curve, for each pressure ($p$), we fit the following equation: 
+
+$$p = \beta_0 + \beta_1 gdp+ \beta_2 gdp$$
+Here, both $p$ and $gdp$ are expressed as per capita. We fit this model for each pressure for the countries' total consumption footprint, their internal footprint, and their external footprint. We also tested for the cumulative footprint and cumulative footprint excluding GHG, aligned with the hypothesis that a Kuznets curve is more likely to appear for pressures that translate more directly into localized impacts than diffuse or indirect impacts. 
+
+```{r}
+# Create function to fit curves for Kuznets test according to Lind, J.T. and Mehlum, H., 2010. With or without U? The appropriate test for a U‐shaped relationship. Oxford bulletin of economics and statistics, 72(1), pp.109-118.
+kuznets_fits <- function(data, xcol, ycol, stressor_type){
+  # Set up data frame to store outputs
+  kuznets_fits_df <- data.frame(pressure = character(1),
+                           stressor_type = character(1),
+                           intercept = numeric(1), 
+                           intercept_sig = numeric(1),
+                           x_coeff = numeric(1),
+                           x_coeff_sig = numeric(1),
+                           x2_coeff = numeric(1),
+                           x2_coeff_sig = numeric(1))
+  data <- data %>%
+    select(x = .data[[xcol]], y = .data[[ycol]])
+  
+  fit <- lm(data$y ~ poly(data$x, 2, raw = TRUE))
+  
+  kuznets_fits_df$pressure <- paste(ycol)
+  kuznets_fits_df$stressor_type <- paste(stressor_type)
+  kuznets_fits_df$intercept <- fit$coefficients[1]
+  kuznets_fits_df$intercept_sig <- summary(fit)$coefficients[1,4] 
+  kuznets_fits_df$x_coeff <- fit$coefficients[2]
+  kuznets_fits_df$x_coeff_sig <- summary(fit)$coefficients[2,4] 
+  kuznets_fits_df$x2_coeff <- fit$coefficients[3]
+  kuznets_fits_df$x2_coeff_sig<- summary(fit)$coefficients[3,4] 
+  
+  return(kuznets_fits_df)
+}
+
+# Fit for each pressure-source combination
+kuznets_summary <- kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "tonnes_percap_d", stressor_type = "total") %>%
+  bind_rows(kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "ghg_percap_d", stressor_type = "total"))  %>%
+  bind_rows(kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "water_percap_d", stressor_type = "total"))  %>%
+  bind_rows(kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "nutrient_percap_d", stressor_type = "total"))  %>%
+  bind_rows(kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "disturbance_percap_d", stressor_type = "total")) %>%
+    bind_rows(kuznets_fits(data = total_stressor_percap %>%
+                           # Add cumulative pressure indicator
+                           mutate(cumulative_total = ghg/sum(ghg) + water/sum(water) + 
+                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
+                                  cumulative_total_percap_d = cumulative_total/pop_d), 
+                         xcol = "pc_gdp_d", ycol = "cumulative_total_percap_d", stressor_type = "total")) %>%
+  bind_rows(kuznets_fits(data = total_stressor_percap %>%
+                           # Add cumulative pressure indicator
+                           mutate(cumulative_exclude_ghg = water/sum(water) + 
+                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
+                                  cumulative_exclude_ghg_percap_d = cumulative_exclude_ghg/pop_d), 
+                         xcol = "pc_gdp_d", ycol = "cumulative_exclude_ghg_percap_d", stressor_type = "total")) %>%
+  # External footprint
+  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "tonnes_percap_d", stressor_type = "external")) %>%
+  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "ghg_percap_d", stressor_type = "external")) %>%
+  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "water_percap_d", stressor_type = "external")) %>%
+  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "nutrient_percap_d", stressor_type = "external")) %>%
+  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "disturbance_percap_d", stressor_type = "external")) %>%
+      bind_rows(kuznets_fits(data = exported_stressor_percap %>%
+                           # Add cumulative pressure indicator
+                           mutate(cumulative_total = ghg/sum(ghg) + water/sum(water) + 
+                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
+                                  cumulative_total_percap_d = cumulative_total/pop_d), 
+                         xcol = "pc_gdp_d", ycol = "cumulative_total_percap_d", stressor_type = "external")) %>%
+      bind_rows(kuznets_fits(data = exported_stressor_percap %>%
+                           # Add cumulative pressure indicator
+                           mutate(cumulative_exclude_ghg = water/sum(water) + 
+                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
+                                  cumulative_exclude_ghg_percap_d = cumulative_exclude_ghg/pop_d), 
+                         xcol = "pc_gdp_d", ycol = "cumulative_exclude_ghg_percap_d", stressor_type = "external")) %>%
+  
+  # Internal footprint
+  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "tonnes_percap_d", stressor_type = "internal")) %>%
+  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "ghg_percap_d", stressor_type = "internal")) %>%
+  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "water_percap_d", stressor_type = "internal")) %>%
+  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "nutrient_percap_d", stressor_type = "internal")) %>%
+  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "disturbance_percap_d", stressor_type = "internal")) %>%
+      bind_rows(kuznets_fits(data = internal_stressor_percap %>%
+                           # Add cumulative pressure indicator
+                           mutate(cumulative_total = ghg/sum(ghg) + water/sum(water) + 
+                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
+                                  cumulative_total_percap_d = cumulative_total/pop_d), 
+                         xcol = "pc_gdp_d", ycol = "cumulative_total_percap_d", stressor_type = "internal")) %>%
+        bind_rows(kuznets_fits(data = internal_stressor_percap %>%
+                           # Add cumulative pressure indicator
+                           mutate(cumulative_exclude_ghg = water/sum(water) + 
+                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
+                                  cumulative_exclude_ghg_percap_d = cumulative_exclude_ghg/pop_d), 
+                         xcol = "pc_gdp_d", ycol = "cumulative_exclude_ghg_percap_d", stressor_type = "internal"))
+
+# Tests for shape of curve
+kuznets_summary <- kuznets_summary %>%
+  mutate(
+    # Sign of linear component
+    x1_direction = case_when(x_coeff > 0 ~ "positive", TRUE ~ "negative"),
+    # Significance of linear component
+    x1_sig_cat = case_when(x_coeff_sig <= 0.05 ~ "significant", TRUE ~ "not significant"),
+    # Significance of second order
+    x2_sig_cat = case_when(x2_coeff_sig <= 0.05 ~ "significant", TRUE ~ "not significant"),
+    # Stationary point
+    stationary_point = -1*x_coeff/(2*x2_coeff),
+    # Concavity
+    concavity = case_when(2*x2_coeff < 0 ~ "concave down", 2*x2_coeff > 0 ~ "concave up")
+  )
+
+kuznets_summary %>% 
+  filter(pressure != "tonnes_percap_d") %>%
+  mutate(stationary_point_in_range = case_when(
+    (stationary_point > min(total_stressor_percap$pc_gdp_d) &
+       stationary_point < max(total_stressor_percap$pc_gdp_d)) ~ "in range",
+    (stationary_point < min(total_stressor_percap$pc_gdp_d) |
+       stationary_point > max(total_stressor_percap$pc_gdp_d)) ~ "out of range"
+  )) %>%
+  mutate(
+    kuznets_evidence = case_when(
+    (x2_sig_cat == "significant" & concavity == "concave down" &
+       stationary_point_in_range == "in range") ~ "yes",
+    TRUE ~ "no"), 
+    pressure = gsub("_percap_d", "", pressure)) %>%
+    select(stressor_type, pressure, x1_direction, x1_sig_cat, concavity, x2_sig_cat, 
+           stationary_point_in_range, kuznets_evidence) %>%
+  kable(col.names = c("Source", "Pressure", "β1 sign", "β1 sig.", "Concavity", "β2 sig",  
+                      "Stationary pt", "Kuznets evidence"))
+```
+
+## SI Figure 3: Kuznets curves for internal footprint (produced and consumed in the same country) for each pressure. Lines show the fitted quadratic regression line with the gray band indicating the 95% confidence interval. 
+```{r}
+figS3 <- ggarrange(kuznets_internal_ghg, kuznets_internal_water,
+                            kuznets_internal_nutrients, kuznets_internal_disturbance,
+          ncol = 4, nrow = 1, heights = c(rep(3, 8)), widths = c(rep(1, 8)),
+          labels = c("GHG internal", "Water internal", "Nutrients internal", "Disturbance internal"),
+          font.label = list(size = 10, color = "black", face = "bold", family = NULL),
+          vjust = 1, common.legend = TRUE, legend = "bottom")
+
+ggsave("outputs/SIFig3.png", figS3, width = 12, height = 4, units = "in")
+```
+
+## SI Figure 4: Kuznets curves for total, internal and external tonnes consumed by country. Lines show the fitted quadratic regression line with the gray band indicating the 95% confidence interval. 
+```{r}
+figS4 <- ggarrange(kuznets_total_tonnes, kuznets_internal_tonnes, kuznets_external_tonnes, 
+          ncol = 3, nrow = 1, heights = c(rep(3, 8)), widths = c(rep(1, 8)),
+          labels = c("Tonnes total", "Tonnes internal", "Tonnes external"),
+          font.label = list(size = 10, color = "black", face = "bold", family = NULL),
+          vjust = 1, common.legend = TRUE, legend = "bottom")
+
+ggsave("outputs/SIFig4.png", figS4, width = 12, height = 4, units = "in")
+```
+
+
+## SI Figure 5: Percent of consumption footprint that is foreign sourced versus land area by pressure and food group. Points are sized by exclusive economic zone area and colored by region.
+```{r}
+# Create data frame to compare external footprint to land area
+compare_import_export_by_food <- stressor_trade_by_food %>%
+      rename("iso3" = "iso3_d", "country" = "country_d") %>%
+      group_by(iso3, country, flow, food_group) %>%
+      summarise(
+        tonnes = sum(tonnes),
+        ghg = sum(cumulative_ghg),
+        water = sum(cumulative_water),
+        nutrient = sum(cumulative_nutrient),
+        disturbance = sum(cumulative_disturbance)
+      ) %>%
+      pivot_longer(
+        tonnes:disturbance,
+        names_to = "pressure",
+        values_to = "consumption_value"
+      ) %>%
+      group_by(iso3, country, pressure, food_group) %>%
+      mutate(
+        pressure_total = sum(consumption_value),
+        consumption_percent = 100 * consumption_value / sum(consumption_value)
+      ) %>%
+      select(-pressure_total) %>%
+      ungroup() %>%
+  left_join(
+    stressor_trade_by_food %>%
+      rename("iso3" = "iso3_o", "country" = "country_o") %>%
+      group_by(iso3, country, flow, food_group) %>%
+      summarise(
+        tonnes = sum(tonnes),
+        ghg = sum(cumulative_ghg),
+        water = sum(cumulative_water),
+        nutrient = sum(cumulative_nutrient),
+        disturbance = sum(cumulative_disturbance)
+      ) %>%
+      pivot_longer(
+        tonnes:disturbance,
+        names_to = "pressure",
+        values_to = "production_value"
+      ) %>%
+      group_by(iso3, country, pressure, food_group) %>%
+      mutate(
+        pressure_total = sum(production_value),
+        production_percent = 100 * production_value / sum(production_value)
+      ) %>%
+      select(-pressure_total) %>%
+      ungroup(),
+    by = c("iso3", "country", "pressure", "flow", "food_group")
+  ) %>%
+  mutate(region = countrycode(iso3, origin = "iso3c", destination = "region")) %>%
+  left_join(stressor_trade_total %>%
+              select("iso3" = "iso3_d", "total_land" = "total_land_d", "eez_total" = "eez_total_d") %>% 
+              distinct(), 
+            by = "iso3")
+
+# Use this plot
+land_vs_externalFP <- compare_import_export_by_food %>%
+  filter(flow == "foreign", pressure != "tonnes", !is.na(food_group)) %>%
+  ggplot(aes(x = total_land, y = consumption_percent, color = region, size = eez_total)) +
+  geom_point(alpha = 0.7) + 
+  scale_x_log10(
+    breaks = scales::trans_breaks("log10", function(x) 10^x),
+    labels = scales::trans_format("log10", scales::math_format(10^.x))
+  ) +
+  scale_color_manual(values = jv_palette) +
+  labs(x = "Land area", y = "% of consumption foreign sourced",
+       color = "Region", size = "EEZ area") +
+  facet_grid(pressure~food_group, scales = "free") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+land_vs_externalFP
+
+ggsave(filename = "outputs/SIFig5.png", land_vs_externalFP, width = 14, height = 8)
+```
+
+## SI Figure 6: 
+```{r}
+# This object is produced in the code chunk for figure 3
+tonnes_dev_sankey
+
+ggsave(filename = "outputs/SIFig6.png", width = 6, height = 4)
+```
+## SI Figure 7: Percent of tonnes or pressure falling within each flow direction for each food group. 
+```{r}
+figS7 <- dev_cat_flows %>%
+  group_by(food_group, flow_direction) %>%
+  summarise(tonnes = sum(tonnes), 
+            ghg = sum(ghg), 
+            water = sum(water), 
+            nutrient = sum(nutrient), 
+            disturbance = sum(disturbance)) %>%
+  ungroup() %>%
+  pivot_longer(tonnes:disturbance, names_to = "pressure_name", values_to = "pressure_value") %>%
+  group_by(food_group, pressure_name) %>%
+  mutate(percent = 100*pressure_value/sum(pressure_value), 
+         pressure_name = factor(pressure_name, levels = c("tonnes", "ghg", "water", "nutrient", "disturbance"))) %>%
+  ggplot(aes(x = percent, y = pressure_name, fill = flow_direction)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c(sankey_pal[2], sankey_pal[3], "grey80")) +
+  facet_wrap(~food_group) +
+  labs(x = "Percent", y = "", fill = "Flow direction") +
+  theme_bw()
+
+figS7
+
+ggsave(filename = "outputs/SIFig7.png", width = 10, height = 4)
+```
+
+## SI Table 2: Percentages by flow type for each pressure
+```{r}
+dev_cat_flows %>%
+  group_by(flow_direction) %>%
+  summarise(tonnes = sum(tonnes), 
+            ghg = sum(ghg), 
+            water = sum(water), 
+            nutrient = sum(nutrient), 
+            disturbance = sum(disturbance)) %>%
+  pivot_longer(tonnes:disturbance, names_to = "pressure", values_to = "value") %>%
+  group_by(pressure) %>%
+  mutate(percent = 100*value/sum(value)) %>%
+  select(-value) %>% 
+  pivot_wider(names_from = "pressure", values_from = "percent") %>%
+  mutate(flow_direction = factor(flow_direction, levels = c("from lower dev cat to higher", 
+                                 "no change", "from higher dev cat to lower"))) %>%
+  arrange(flow_direction) %>%
+  kable(digits = 2, col.names = c("Flow direction", "% by flow, Tonnes", "% by flow, GHG", 
+                                  "% by flow, Water", "% by flow, Nutrients", "% by flow, Disturbance"))
+
+```
+
+## SI Table 3: Percentages by flow type for each pressure and food group
+```{r}
+# Development flows 
+dev_cat_flows %>%
+  filter(!is.na(food_group)) %>%
+  group_by(food_group, flow_direction) %>%
+  summarise(tonnes = sum(tonnes), 
+            ghg = sum(ghg), 
+            water = sum(water), 
+            nutrient = sum(nutrient), 
+            disturbance = sum(disturbance)) %>%
+  pivot_longer(tonnes:disturbance, names_to = "pressure", values_to = "value") %>%
+  group_by(food_group, pressure) %>%
+  mutate(percent = 100*value/sum(value)) %>%
+  select(-value) %>% 
+  pivot_wider(names_from = "pressure", values_from = "percent") %>%
+  mutate(flow_direction = factor(flow_direction, levels = c("from lower dev cat to higher", 
+                                 "no change", "from higher dev cat to lower"))) %>%
+  arrange(food_group, flow_direction) %>%
+  kable(digits = 2, col.names = c("Food group", "Flow direction", "% by flow, Tonnes", "% by flow, GHG", 
+                                  "% by flow, Water", "% by flow, Nutrients", "% by flow, Disturbance"))
+
+```
+
+## SI Figure 8: Correlation matirx for variables considered for gravity model. 
+```{r}
+# Check variable correlations
+# Create custom labels
+custom_labels <- c("Log(GDP)" = "log_gdp_o", 
+                   "Hegemony" = "heg_o", 
+                   "Mean education" = "mean_education_o", 
+                   "% food insecure" = "per_food_insecure_o", 
+                   "Per cap GDP" = "pc_gdp_o", 
+                   "SIGI" = "sigi_o", 
+                   "Climate policy" = "climate_policy_o", 
+                   "Total land" = "total_land_o", 
+                   "Total renewable water" = "total_renewable_water_o")
+
+figS8 <- stressor_trade_total %>% 
+  mutate(log_gdp_o = log(gdp_o), 
+         log_gdp_d = log(gdp_d)) %>%
+  select(iso3_o, total_land_o, all_of(regressor_list)) %>%
+  select(ends_with("_o")) %>%
+  distinct() %>%
+  rename("LogGDP" = "log_gdp_o", 
+         "Hegemony" = "heg_o", 
+         "Education" = "mean_education_o", 
+         "FoodInsecurity" = "per_food_insecure_o", 
+         "PerCapGDP" = "pc_gdp_o", 
+         "SIGI" = "sigi_o", 
+         "ClimatePolicy" = "climate_policy_o", 
+         "Land" = "total_land_o", 
+         "Water" = "total_renewable_water_o", 
+         "EEZ" = "eez_total_o") %>%
+  ggcorr(label = TRUE) 
+
+figS8
+
+ggsave(filename = "outputs/SIFig8.png", figS8, width = 8, height = 8)
+
+```
+
+## SI Table 4: 
+
+```{r}
+# Basic gravity model
+# Set model variables
+regressor_list <- c("log_gdp_o", "log_gdp_d")
+
+# Total trade
+## Total trade, ghg pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "ghg", 
+                      regressors = regressor_list, model_name = "total, ghg")
+
+# Write over data frame to store parameters from new model
+fit_df_combined <- fit_df
+
+## Total trade, water pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "water", 
+                      regressors = regressor_list, model_name = "total, water")
+
+fit_df_combined <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+## Total trade, nutrient pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "nutrient", 
+                      regressors = regressor_list, model_name = "total, nutrient")
+
+fit_df_combined <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+## Total trade, disturbance pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "disturbance", 
+                      regressors = regressor_list, model_name = "total, disturbance")
+
+fit_df_combined_basic <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+# Improved standard gravity model
+# Set model variables
+regressor_list <- c("log_gdp_o", "log_gdp_d",
+                    "contig", 
+                    "rta", "comlang_off")
+
+# Total trade
+## Total trade, ghg pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "ghg", 
+                      regressors = regressor_list, model_name = "total, ghg")
+
+# Write over data frame to store parameters from new model
+fit_df_combined <- fit_df
+
+## Total trade, water pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "water", 
+                      regressors = regressor_list, model_name = "total, water")
+
+fit_df_combined <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+## Total trade, nutrient pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "nutrient", 
+                      regressors = regressor_list, model_name = "total, nutrient")
+
+fit_df_combined <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+## Total trade, disturbance pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "disturbance", 
+                      regressors = regressor_list, model_name = "total, disturbance")
+
+fit_df_combined_improved <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+
+# Improved standard gravity model w/biophysical
+# Set model variables
+regressor_list <- c("log_gdp_o", "log_gdp_d",
+                    "contig", 
+                    "rta", "comlang_off",
+                     "eez_total_o", "eez_total_d",
+                     "total_renewable_water_o", "total_renewable_water_d"
+                    )
+
+# Total trade
+## Total trade, ghg pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "ghg", 
+                      regressors = regressor_list, model_name = "total, ghg")
+
+# Write over data frame to store parameters from new model
+fit_df_combined <- fit_df
+
+## Total trade, water pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "water", 
+                      regressors = regressor_list, model_name = "total, water")
+
+fit_df_combined <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+## Total trade, nutrient pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "nutrient", 
+                      regressors = regressor_list, model_name = "total, nutrient")
+
+fit_df_combined <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+## Total trade, disturbance pressure
+fit_df <- fit_gravity(trade_data = df_standardized, response = "disturbance", 
+                      regressors = regressor_list, model_name = "total, disturbance")
+
+fit_df_combined_improved_biophysical <- fit_df_combined %>% 
+  bind_rows(fit_df)
+
+# Table comparing model fits
+fit_df_combined_basic %>%
+  select("pressure" = "model_name", r2) %>%
+  distinct() %>%
+  mutate(model = "GDP and distance only") %>%
+  bind_rows(
+    fit_df_combined_improved %>%
+      select("pressure" = "model_name", r2) %>%
+      distinct() %>%
+      mutate(model = "Standard econ variables")
+  ) %>%
+  bind_rows(
+    fit_df_combined_improved_biophysical %>%
+      select("pressure" = "model_name", r2) %>%
+      distinct() %>%
+      mutate(model = "Standard econ + environmental resource variables")
+  ) %>%
+  bind_rows(
+    fit_df_combined_full %>%
+      select("pressure" = "model_name", r2) %>%
+      distinct() %>%
+      mutate(model = "Full model")
+  ) %>%
+  mutate(r2 = round(r2, 2)) %>%
+  select(model, pressure, r2) %>%
+  mutate(pressure = str_replace(pressure, "total, ", "")) %>%
+  pivot_wider(names_from = pressure, values_from = r2) %>% 
+  kable(col.names = c("Model", "GHG R²", "Water R²", "Nutrient R²", "Disturbance R²"))
+
+```
+
+## SI Figure 9:  Percent of each country’s production pressure that is exported (stacked bar extending left) compared to the percent of the country’s consumption pressure that is associated with imported food (stacked bar extending right), with bars colored by food group and faceted by pressure.
+```{r, fig.height=10, fig.width=8}
+compare_pressure_source_by_food <- stressor_trade_by_food %>%
+  group_by(iso3_d, country_d, flow, food_group) %>%
+  summarise(tonnes = sum(tonnes), 
+            ghg = sum(ghg), 
+            water = sum(water), 
+            nutrient = sum(nutrient), 
+            disturbance = sum(disturbance)) %>%
+  pivot_longer(tonnes:disturbance, names_to = "pressure", values_to = "pressure_value") %>%
+  group_by(iso3_d, country_d, pressure) %>%
+  mutate(pressure_total = sum(pressure_value),
+         percent = 100*pressure_value/sum(pressure_value)) %>%
+  ungroup() 
+
+
+compare_pressure_balance <- stressor_trade_by_food %>%
+  group_by(iso3_d, country_d, flow, food_group) %>%
+  summarise(ghg = sum(cumulative_ghg), 
+            water = sum(cumulative_water), 
+            nutrient = sum(cumulative_nutrient), 
+            disturbance = sum(cumulative_disturbance)) %>%
+  pivot_longer(ghg:disturbance, names_to = "pressure", values_to = "pressure_value") %>%
+  group_by(iso3_d, country_d) %>%
+  mutate(percent = 100*pressure_value/sum(pressure_value)) %>%
+  mutate(pressure_type = "consumption") %>%
+  rename(iso3 = iso3_d, country = country_d) %>%
+  bind_rows(
+    stressor_trade_by_food %>%
+      group_by(iso3_o, country_o, flow, food_group) %>%
+      summarise(ghg = sum(cumulative_ghg), 
+            water = sum(cumulative_water), 
+            nutrient = sum(cumulative_nutrient), 
+            disturbance = sum(cumulative_disturbance)) %>%
+      pivot_longer(ghg:disturbance, names_to = "pressure", values_to = "pressure_value") %>%
+      group_by(iso3_o, country_o) %>%
+      mutate(percent = 100*pressure_value/sum(pressure_value)) %>%
+      mutate(pressure_type = "production") %>%
+      rename(iso3 = iso3_o, country = country_o)
+  ) %>%
+  filter(!is.na(food_group))
+
+# Check it sums to 1 correctly
+compare_pressure_balance %>%
+  group_by(iso3, pressure_type) %>%
+  summarise(sum_check = sum(percent)) %>%
+  filter(abs(sum_check-100) >0.001)
+
+# Create ranking order
+compare_pressure_balance_rank <- compare_pressure_balance %>%
+  filter(flow == "foreign", pressure_type == "production") %>%
+  group_by(iso3) %>%
+  summarise(rank = sum(percent))
+
+
+compare_pressure_balance %>%
+  filter(flow == "foreign") %>%
+  mutate(pressure_value_modified = case_when(
+    pressure_type == "production" ~ -1*pressure_value, 
+    TRUE ~ pressure_value
+  ),
+  percent_modified = case_when(
+    pressure_type == "production" ~ -1*percent, 
+    TRUE ~ percent
+  )) %>%
+  ungroup() %>%
+  left_join(compare_pressure_balance_rank, by = "iso3") %>%
+  mutate(country = fct_reorder(country, rank)) %>%
+  mutate(region = countrycode(iso3, origin = "iso3c", destination = "region")) %>%
+  mutate(region = factor(region, levels = c("East Asia & Pacific", "South Asia", "Europe & Central Asia", 
+                                            "Middle East & North Africa", "Sub-Saharan Africa", 
+                                            "Latin America & Caribbean", "North America"))) %>%
+  filter(region %in% c("East Asia & Pacific", "South Asia", "Europe & Central Asia")) %>%
+  ggplot(aes(y = country, x = percent_modified, fill = food_group)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_vline(xintercept = 0) +
+  scale_fill_manual(values = color_order) +
+  labs(x = "<-- % production pressure exported  |  % consumption pressure imported -->", y = "", fill = "Food group") +
+  facet_grid(region~pressure, scales = "free_y", space = "free") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggsave("outputs/SIFig9a.png", width = 8, height = 12, units = "in")
+
+compare_pressure_balance %>%
+  filter(flow == "foreign") %>%
+  mutate(pressure_value_modified = case_when(
+    pressure_type == "production" ~ -1*pressure_value, 
+    TRUE ~ pressure_value
+  ),
+  percent_modified = case_when(
+    pressure_type == "production" ~ -1*percent, 
+    TRUE ~ percent
+  )) %>%
+  ungroup() %>%
+  left_join(compare_pressure_balance_rank, by = "iso3") %>%
+  mutate(country = fct_reorder(country, rank)) %>%
+  mutate(region = countrycode(iso3, origin = "iso3c", destination = "region")) %>%
+  mutate(region = factor(region, levels = c("East Asia & Pacific", "South Asia", "Europe & Central Asia", 
+                                            "Middle East & North Africa", "Sub-Saharan Africa", 
+                                            "Latin America & Caribbean", "North America"))) %>%
+  filter(region %in% c("Middle East & North Africa", "Sub-Saharan Africa", 
+                                            "Latin America & Caribbean", "North America")) %>% 
+  ggplot(aes(y = country, x = percent_modified, fill = food_group)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_vline(xintercept = 0) +
+  scale_fill_manual(values = color_order) +
+  labs(x = "<-- % production pressure exported  |  % consumption pressure imported -->", y = "", fill = "Food group") +
+  facet_grid(region~pressure, scales = "free_y", space = "free") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggsave("outputs/SIFig9b.png", width = 8, height = 12, units = "in")
+```
+
+
+
+
+
