@@ -1,5 +1,5 @@
 ---
-title: "Figures and Results"
+title: "figures and Results"
 author: "Jessica Gephart"
 date: "2024-06-05"
 output: html_document
@@ -13,6 +13,7 @@ rm(list = ls())
 
 # Data cleaning
 library(tidyverse)
+library(ggplot2)
 library(countrycode)
 library(CoordinateCleaner)
 library(knitr)
@@ -39,12 +40,11 @@ library(ggsankey)
 library(hrbrthemes)
 library(RColorBrewer)
 library(colorspace)
+library(patchwork)
 
 # Modeling
 library(gravity)
-library(randomForest)
-
-datadir <- "/home/shares/food-systems/social_justice_projects/food_trade_pressures/output_data"
+#library(randomForest)
 
 source("00_plot_functions.R")
 ```
@@ -201,14 +201,14 @@ circle_theme <- theme(axis.line=element_blank(),
 
 # Results
 ## Unequal burden of food consumption footprints 
-### Figure 1
-Figure 1: Distribution of global food footprints. a) National per capita consumptive footprints by pressure. b) Internal and external total national footprints for countries with the highest total footprint within each region. 
+### figure 1
+figure 1: Distribution of global food footprints. a) National per capita consumptive footprints by pressure. b) Internal and external total national footprints for countries with the highest total footprint within each region. 
 
-Figure goals: 
+figure goals: 
 Characterize the distribution of global production and consumption footprints, distinguishing countries’ internal and external footprints by food group.
 
 ```{r}
-# Fig 1a per capita distribution
+# fig 1a per capita distribution
 # Percent falling within 50% of the median
 x <- 0.5
 
@@ -318,18 +318,41 @@ fig1b_main <-  fig1b_df %>%
         strip.text.y.left = element_text(angle = 0),
         strip.placement = "outside")
 
-ggsave("outputs/fig1b_main.png", fig1b_main, width = 4, height = 5.5, units = "in", scale = 2)
+# set base theme font size, no background grid
+base_theme <- theme(text = element_text(size = 8),
+                    panel.grid.major = element_blank(),
+                    panel.grid.minor = element_blank())
 
-fig1b_main <- ggdraw() + draw_image("outputs/fig1b_main.png")
-fig1b_insert <- ggdraw() + draw_image("outputs/fig1b_insert.png")
+# fig1a is the only panel that keeps a legend: horizontal, single row, centered
+fig1a_f <- fig1a +
+  base_theme +
+  guides(fill = guide_legend(nrow = 1)) +
+  theme(legend.direction = "horizontal",
+        legend.justification = "center")
 
-fig1b <- fig1b_main + 
-  draw_image("outputs/fig1b_insert.png", x = .5, y = .1, width = 0.4, height = 0.4) 
-ggsave("outputs/fig1b.png", fig1b, width = 7, height = 4, units = "in")
+# The other two panels explicitly have no legend
+fig1b_insert_f <- fig1b_insert +
+  base_theme +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 8, face = "bold"),
+        plot.background = element_rect(fill = "white", color = "grey80", linewidth = 0.6),
+        plot.margin = ggplot2::margin(4, 4, 4, 4))
 
-# Join Fig1a and Fib1b
-fig1 <- ggarrange(fig1a, fig1b, common.legend = TRUE, widths = c(0.4, 0.6))
-ggsave("outputs/fig1.png", fig1, width = 7, height = 5, units = "in")
+fig1b_main_f <- fig1b_main +
+  base_theme +
+  theme(legend.position = "none")
+
+fig1b <- fig1b_main_f +
+  inset_element(fig1b_insert_f, left = 0.42, bottom = 0.05, right = 0.98, top = 0.60)
+
+# Legend position and centering are set once, on the whole figure
+fig1 <- (fig1a_f + fig1b) +
+  plot_layout(widths = c(0.4, 0.6), guides = "collect") +
+  plot_annotation(theme = theme(legend.position = "top",
+                                legend.justification = c(0.25, 0.5),
+                                legend.location = "plot"))
+
+ggsave("outputs/fig1.png", fig1, width = 8, height = 7, units = "in")
 
 ```
 
@@ -519,228 +542,148 @@ stressor_trade_total %>%
 ```
 
 ## Wealth and the export of environmental pressures 
-### Figure 2
+### figure 2
 ```{r}
-# Set span for Loess smooth line
-set_span <- 25
-
-# Tonnes
-# Total 
-kuznets_total_tonnes <- total_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = tonnes_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  geom_text_repel(aes(label = iso3_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Tonnes per capita", color = "Region") +
-  theme_minimal()
-
-# Exported
-kuznets_external_tonnes <- exported_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = tonnes_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Tonnes per capita", color = "Region") +
-  theme_minimal()
-
-# Internal
-kuznets_internal_tonnes <- internal_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = tonnes_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Tonnes per capita", color = "Region") +
-  theme_minimal()
-
-# GHG
-# Total 
-kuznets_total_ghg <- total_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = ghg_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "GHG per capita", color = "Region") +
-  theme_minimal()
-
-# Exported
-kuznets_external_ghg <- exported_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = ghg_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "GHG per capita", color = "Region") +
-  theme_minimal()
-
-# Internal
-kuznets_internal_ghg <- internal_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = ghg_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "GHG per capita", color = "Region") +
-  theme_minimal()
-
-# Water
-# Total 
-kuznets_total_water <- total_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = water_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Water per capita", color = "Region") +
-  theme_minimal()
-
-# Exported
-kuznets_external_water <- exported_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = water_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Water per capita", color = "Region") +
-  theme_minimal()
-
-# Internal
-kuznets_internal_water <- internal_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = water_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Water per capita", color = "Region") +
-  theme_minimal()
-
-# Nutrients
-# Total 
-kuznets_total_nutrients <- total_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = nutrient_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Nutrient per capita", color = "Region") +
-  theme_minimal()
-
-# Exported
-kuznets_external_nutrients <- exported_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = nutrient_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Nutrient per capita", color = "Region") +
-  theme_minimal()
-
-# Internal
-kuznets_internal_nutrients <- internal_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = nutrient_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Nutrient per capita", color = "Region") +
-  theme_minimal()
+source("Simonsohn_two_lines.R")
+total_stressor_percap <- total_stressor_percap %>%
+  mutate(
+    cumulative_total = ghg/sum(ghg) + water/sum(water) +
+      nutrient/sum(nutrient) + disturbance/sum(disturbance), 
+    cumulative_total_percap_d = cumulative_total/pop_d,
+    cumulative_exclude_ghg = water/sum(water) +
+      nutrient/sum(nutrient) + disturbance/sum(disturbance),
+    cumulative_exclude_ghg_percap_d = cumulative_exclude_ghg/pop_d
+    )
 
 
-# Disturbance
-# Total 
-kuznets_total_disturbance <- total_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = disturbance_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Disturbance per capita", color = "Region") +
-  theme_minimal()
+exported_stressor_percap <- exported_stressor_percap %>%
+  mutate(
+    cumulative_total = ghg/sum(ghg) + water/sum(water) +
+      nutrient/sum(nutrient) + disturbance/sum(disturbance), 
+    cumulative_total_percap_d = cumulative_total/pop_d,
+    cumulative_exclude_ghg = water/sum(water) +
+      nutrient/sum(nutrient) + disturbance/sum(disturbance),
+    cumulative_exclude_ghg_percap_d = cumulative_exclude_ghg/pop_d
+  )
 
-# Exported
-kuznets_external_disturbance <- exported_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = disturbance_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) + 
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Disturbance per capita", color = "Region") +
-  theme_minimal()
+internal_stressor_percap <- internal_stressor_percap %>%
+  mutate(
+    cumulative_total = ghg/sum(ghg) + water/sum(water) +
+      nutrient/sum(nutrient) + disturbance/sum(disturbance), 
+    cumulative_total_percap_d = cumulative_total/pop_d,
+    cumulative_exclude_ghg = water/sum(water) +
+      nutrient/sum(nutrient) + disturbance/sum(disturbance),
+    cumulative_exclude_ghg_percap_d = cumulative_exclude_ghg/pop_d
+  )
 
-# Internal
-kuznets_internal_disturbance <- internal_stressor_percap %>%
-  mutate(pc_gdp_d = pc_gdp_d/1000) %>%
-  ggplot(aes(x = pc_gdp_d, y = disturbance_percap_d)) +
-  geom_point(aes(color = region_d)) +
-  stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1, color = "grey30") +
-  geom_text_repel(aes(label = iso3_d)) +
-  scale_color_manual(values = jv_palette) +
-  labs(x = "GDP per capita (1000)", y = "Disturbance per capita", color = "Region") +
-  theme_minimal()
+# total footprints
+two_lines_total_ghg <- twolines(f = ghg_percap_d~pc_gdp_d, 
+                                data = total_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "GHG per capita")
+two_lines_total_water <- twolines(f = water_percap_d~pc_gdp_d, 
+                                  data = total_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "Water per capita")
+two_lines_total_nutrient <- twolines(f = nutrient_percap_d~pc_gdp_d, 
+                                     data = total_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "Nutrient per capita")
+two_lines_total_disturbance <- twolines(f = disturbance_percap_d~pc_gdp_d, 
+                                        data = total_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "Disturbance per capita")
+two_lines_total_tonnes <- twolines(f = tonnes_percap_d~pc_gdp_d, 
+                                   data = total_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "Tonnes per capita")
 
-fig2 <- ggarrange(kuznets_total_ghg, kuznets_total_water, 
-                            kuznets_total_nutrients, kuznets_total_disturbance,
-                            kuznets_external_ghg, kuznets_external_water,
-                            kuznets_external_nutrients, kuznets_external_disturbance,
-          ncol = 4, nrow = 2, heights = c(rep(3, 8)), widths = c(rep(1, 8)),
-          labels = c("GHG total", "Water total", "Nutrients total", "Disturbance total", 
-                     "GHG external", "Water external", "Nutrients external", "Disturbance external"),
-          font.label = list(size = 10, color = "black", face = "bold", family = NULL),
-          vjust = 1, common.legend = TRUE, legend = "bottom")
+# internal footprints
+two_lines_internal_ghg <- twolines(f = ghg_percap_d~pc_gdp_d, 
+                                   data = internal_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "GHG per capita")
+two_lines_internal_water <- twolines(f = water_percap_d~pc_gdp_d, 
+                                     data = internal_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "Water per capita")
+two_lines_internal_nutrient <- twolines(f = nutrient_percap_d~pc_gdp_d, 
+                                        data = internal_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "Nutrient per capita")
+two_lines_internal_disturbance <- twolines(f = disturbance_percap_d~pc_gdp_d, 
+                                           data = internal_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "Disturbance per capita")
+two_lines_internal_tonnes <- twolines(f = tonnes_percap_d~pc_gdp_d, 
+                                      data = internal_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "",
+                                ylab = "Tonnes per capita")
 
-fig2
+# external footprints
+two_lines_external_ghg <- twolines(f = ghg_percap_d~pc_gdp_d, 
+                                   data = exported_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "GDP per capita (1000)",
+                                ylab = "GHG per capita")
+two_lines_external_water <- twolines(f = water_percap_d~pc_gdp_d, 
+                                     data = exported_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "GDP per capita (1000)",
+                                ylab = "Water per capita")
+two_lines_external_nutrient <- twolines(f = nutrient_percap_d~pc_gdp_d, 
+                                        data = exported_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "GDP per capita (1000)",
+                                ylab = "Nutrient per capita")
+two_lines_external_disturbance <- twolines(f = disturbance_percap_d~pc_gdp_d, 
+                                           data = exported_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "GDP per capita (1000)",
+                                ylab = "Disturbance per capita")
+two_lines_external_tonnes <- twolines(f = tonnes_percap_d~pc_gdp_d, 
+                                      data = exported_stressor_percap,
+                                x.scale = 1000,
+                                xlab = "GDP per capita (1000)",
+                                ylab = "Tonnes per capita")
 
-ggsave("outputs/fig2.png", fig2, width = 12, height = 6, units = "in")
+# plots
+kuznets_two_lines_plot <- ggarrange(two_lines_total_ghg$plot, two_lines_total_water$plot,
+          two_lines_total_nutrient$plot, two_lines_total_disturbance$plot, 
+          # internal
+          two_lines_internal_ghg$plot, two_lines_internal_water$plot,
+          two_lines_internal_nutrient$plot, two_lines_internal_disturbance$plot,
+          # external
+          two_lines_external_ghg$plot, two_lines_external_water$plot,
+          two_lines_external_nutrient$plot, two_lines_external_disturbance$plot, 
+          ncol = 4, nrow =3, common.legend = TRUE, legend = "bottom", 
+          labels = c("GHG total", "Water total", "Nutrient total", "Disturbance total", 
+                     "GHG internal", "Water internal", "Nutrient internal", "Disturbance internal",
+                     "GHG external", "Water external", "Nutrient external", "Disturbance external"), 
+          font.label = list(size = 10, face = "bold", color = "black"),
+          label.x = 0.5,      # horizontal position 
+          label.y = 1,      # vertical position 
+          hjust = 0,        # default is -0.5; lower values move the label left
+          vjust = 1)        # default is 1.5; lower values move the label up
+
+ggsave(filename = "outputs/fig2.png", 
+       plot = kuznets_two_lines_plot, 
+       width = 12, height = 8, units = "in")
+
 ```
-
-### Results section 2 in text stats
-
-Patterns of countries driving peak and downward portion of curve
-```{r}
-stressor_trade_total %>% 
-  select(iso3_o, region_o, total_land_o, agriculture_land_o, pc_gdp_o) %>%
-  distinct() %>%
-  mutate(land_percap = total_land_o/pc_gdp_o, 
-         ag_land_percap = agriculture_land_o/pc_gdp_o,
-         land_percap_rank = rank(land_percap), 
-         ag_percap_rank = rank(ag_land_percap)) %>%
-  mutate(group = case_when(
-    iso3_o %in% c("ARE", "QAT", "SGP", "BRN", "SYC") ~ "above",
-    iso3_o %in% c("TWN", "CHE", "SWE", "NOR", "USA", "AUS", "DNK") ~ "below"
-  )) %>%
-  filter(!is.na(group)) %>%
-  select(-pc_gdp_o) %>%
-  kable(col.names = c("ISO3c", "Region", "Land", "Ag Land", "Land per cap", "Ag land per cap", "Land per cap rank", "Ag land per cap rank", "Curve position"))
-
-percap_gdp_percentile <- stressor_trade_total %>% 
-  select(iso3_d, gdp_d, pop_d) %>%
-  distinct() %>%
-  mutate(gdp_pc = gdp_d/pop_d) %>%
-  arrange(-gdp_pc) 
-
-quantile(percap_gdp_percentile$gdp_pc, seq(0.9, 1, 0.01), na.rm = TRUE)
-```
-
 
 ## Environmental justice and the export of food footprints
-### Figure 3
+### figure 3
 ```{r}
 sankey_pal <- c("#F37542", "#F7AF75", "#86ADA7", "#1B708F")
 
@@ -920,7 +863,7 @@ dev_cat_flows_percap %>%
 
 
 
-### Figure 4
+### figure 4
 
 Gravity methods text
 
@@ -1043,10 +986,10 @@ fig4 <- fit_df_combined_full %>%
 
 fig4
 
-ggsave(filename = "outputs/Fig4.png", fig4, width = 8, height = 4)
+ggsave(filename = "outputs/fig4.png", fig4, width = 8, height = 4)
 ```
 
-### Figure 5
+### figure 5
 
 ```{r}
 # USA imports of cumulative pressures
@@ -1120,7 +1063,7 @@ fig5 <- ggarrange(ggarrange(usa_import, ind_export,
           ncol = 2, widths = c(0.6, 0.4))
 fig5
 
-ggsave(filename = "outputs/Fig5.png", fig5, width = 12, height = 8)
+ggsave(filename = "outputs/fig5.png", fig5, width = 12, height = 8)
 
 ```
 
@@ -1200,8 +1143,8 @@ ind_internal <- stressor_trade_total %>%
 
 India is a lower middle income country and 65% of its cumulative pressures are associated with food exports consumed by higher income countries, representing `r round(100*ind_low_to_high/ind_total_prod, 1)`% of India’s overall food production footprint, as `r round(100*ind_internal/ind_total_prod,1)`% of India's production footprint is associated with domestic consumption.
 
-# Supplementary Figures
-## SI Figure 1 - Internal and external consumption footprint circular bar plot
+# Supplementary figures
+## SI figure 1 - Internal and external consumption footprint circular bar plot
 ```{r}
 # Data for consumer and producer circle bar plots
 # Create data frame with cumulative pressures, summed by producer and consumer
@@ -1316,12 +1259,12 @@ si_fig1 <- ggarrange(consumer_circle_barplot, top_consumer_barplot, widths = c(0
                      labels = c("a", "b"))
 si_fig1
 
-ggsave(filename = "outputs/SIFig1.png", si_fig1, width = 16, height = 10, units = "in")
+ggsave(filename = "outputs/SIfig1.png", si_fig1, width = 16, height = 10, units = "in")
   
 ```
 
 
-## SI Figure 2 - Internal and external production footprint circular bar plot
+## SI figure 2 - Internal and external production footprint circular bar plot
 
 ```{r, fig.height= 6, fig.width= 12}
 # Select top producer countries 
@@ -1400,161 +1343,66 @@ si_fig2 <- ggarrange(producer_circle_barplot, top_producer_barplot, widths = c(0
                      labels = c("a", "b"))
 si_fig2
 
-ggsave(filename = "outputs/SIFig2.png", si_fig2, width = 16, height = 10, units = "in")
+ggsave(filename = "outputs/SIfig2.png", si_fig2, width = 16, height = 10, units = "in")
 ```
 
 ## SI Table 1: relationship of production, consumption and export footprints with GDP
 
-To test for the presence of a Kuznets curve, we followed Lind and Mehlum (2009), which requires that a curve have a significant quadratic term, that the curve is concave down, and that the maximum occurs within the relevant range, in this case, of per capita GDP. Therefore, to test for evidence of a Kuznets curve, for each pressure ($p$), we fit the following equation: 
-
-$$p = \beta_0 + \beta_1 gdp+ \beta_2 gdp$$
-Here, both $p$ and $gdp$ are expressed as per capita. We fit this model for each pressure for the countries' total consumption footprint, their internal footprint, and their external footprint. We also tested for the cumulative footprint and cumulative footprint excluding GHG, aligned with the hypothesis that a Kuznets curve is more likely to appear for pressures that translate more directly into localized impacts than diffuse or indirect impacts. 
-
 ```{r}
-# Create function to fit curves for Kuznets test according to Lind, J.T. and Mehlum, H., 2010. With or without U? The appropriate test for a U‐shaped relationship. Oxford bulletin of economics and statistics, 72(1), pp.109-118.
-kuznets_fits <- function(data, xcol, ycol, stressor_type){
-  # Set up data frame to store outputs
-  kuznets_fits_df <- data.frame(pressure = character(1),
-                           stressor_type = character(1),
-                           intercept = numeric(1), 
-                           intercept_sig = numeric(1),
-                           x_coeff = numeric(1),
-                           x_coeff_sig = numeric(1),
-                           x2_coeff = numeric(1),
-                           x2_coeff_sig = numeric(1))
-  data <- data %>%
-    select(x = .data[[xcol]], y = .data[[ycol]])
-  
-  fit <- lm(data$y ~ poly(data$x, 2, raw = TRUE))
-  
-  kuznets_fits_df$pressure <- paste(ycol)
-  kuznets_fits_df$stressor_type <- paste(stressor_type)
-  kuznets_fits_df$intercept <- fit$coefficients[1]
-  kuznets_fits_df$intercept_sig <- summary(fit)$coefficients[1,4] 
-  kuznets_fits_df$x_coeff <- fit$coefficients[2]
-  kuznets_fits_df$x_coeff_sig <- summary(fit)$coefficients[2,4] 
-  kuznets_fits_df$x2_coeff <- fit$coefficients[3]
-  kuznets_fits_df$x2_coeff_sig<- summary(fit)$coefficients[3,4] 
-  
-  return(kuznets_fits_df)
-}
+kuznets_summary <-  two_lines_total_ghg$results %>%
+  bind_rows(two_lines_total_water$results) %>%
+  bind_rows(two_lines_total_nutrient$results) %>%
+  bind_rows(two_lines_total_disturbance$results) %>%
+  bind_rows(two_lines_total_tonnes$results) %>%
+  # internal
+  bind_rows(two_lines_internal_ghg$results) %>%
+  bind_rows(two_lines_internal_water$results) %>%
+  bind_rows(two_lines_internal_nutrient$results) %>%
+  bind_rows(two_lines_internal_disturbance$results) %>%
+  bind_rows(two_lines_internal_tonnes$results) %>%
+  # external
+  bind_rows(two_lines_external_ghg$results) %>%
+  bind_rows(two_lines_external_water$results) %>%
+  bind_rows(two_lines_external_nutrient$results) %>%
+  bind_rows(two_lines_external_disturbance$results) %>%
+  bind_rows(two_lines_external_tonnes$results)
 
-# Fit for each pressure-source combination
-kuznets_summary <- kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "tonnes_percap_d", stressor_type = "total") %>%
-  bind_rows(kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "ghg_percap_d", stressor_type = "total"))  %>%
-  bind_rows(kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "water_percap_d", stressor_type = "total"))  %>%
-  bind_rows(kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "nutrient_percap_d", stressor_type = "total"))  %>%
-  bind_rows(kuznets_fits(data = total_stressor_percap, xcol = "pc_gdp_d", ycol = "disturbance_percap_d", stressor_type = "total")) %>%
-    bind_rows(kuznets_fits(data = total_stressor_percap %>%
-                           # Add cumulative pressure indicator
-                           mutate(cumulative_total = ghg/sum(ghg) + water/sum(water) + 
-                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
-                                  cumulative_total_percap_d = cumulative_total/pop_d), 
-                         xcol = "pc_gdp_d", ycol = "cumulative_total_percap_d", stressor_type = "total")) %>%
-  bind_rows(kuznets_fits(data = total_stressor_percap %>%
-                           # Add cumulative pressure indicator
-                           mutate(cumulative_exclude_ghg = water/sum(water) + 
-                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
-                                  cumulative_exclude_ghg_percap_d = cumulative_exclude_ghg/pop_d), 
-                         xcol = "pc_gdp_d", ycol = "cumulative_exclude_ghg_percap_d", stressor_type = "total")) %>%
-  # External footprint
-  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "tonnes_percap_d", stressor_type = "external")) %>%
-  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "ghg_percap_d", stressor_type = "external")) %>%
-  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "water_percap_d", stressor_type = "external")) %>%
-  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "nutrient_percap_d", stressor_type = "external")) %>%
-  bind_rows(kuznets_fits(data = exported_stressor_percap, xcol = "pc_gdp_d", ycol = "disturbance_percap_d", stressor_type = "external")) %>%
-      bind_rows(kuznets_fits(data = exported_stressor_percap %>%
-                           # Add cumulative pressure indicator
-                           mutate(cumulative_total = ghg/sum(ghg) + water/sum(water) + 
-                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
-                                  cumulative_total_percap_d = cumulative_total/pop_d), 
-                         xcol = "pc_gdp_d", ycol = "cumulative_total_percap_d", stressor_type = "external")) %>%
-      bind_rows(kuznets_fits(data = exported_stressor_percap %>%
-                           # Add cumulative pressure indicator
-                           mutate(cumulative_exclude_ghg = water/sum(water) + 
-                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
-                                  cumulative_exclude_ghg_percap_d = cumulative_exclude_ghg/pop_d), 
-                         xcol = "pc_gdp_d", ycol = "cumulative_exclude_ghg_percap_d", stressor_type = "external")) %>%
-  
-  # Internal footprint
-  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "tonnes_percap_d", stressor_type = "internal")) %>%
-  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "ghg_percap_d", stressor_type = "internal")) %>%
-  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "water_percap_d", stressor_type = "internal")) %>%
-  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "nutrient_percap_d", stressor_type = "internal")) %>%
-  bind_rows(kuznets_fits(data = internal_stressor_percap, xcol = "pc_gdp_d", ycol = "disturbance_percap_d", stressor_type = "internal")) %>%
-      bind_rows(kuznets_fits(data = internal_stressor_percap %>%
-                           # Add cumulative pressure indicator
-                           mutate(cumulative_total = ghg/sum(ghg) + water/sum(water) + 
-                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
-                                  cumulative_total_percap_d = cumulative_total/pop_d), 
-                         xcol = "pc_gdp_d", ycol = "cumulative_total_percap_d", stressor_type = "internal")) %>%
-        bind_rows(kuznets_fits(data = internal_stressor_percap %>%
-                           # Add cumulative pressure indicator
-                           mutate(cumulative_exclude_ghg = water/sum(water) + 
-                                    nutrient/sum(nutrient) + disturbance/sum(disturbance), 
-                                  cumulative_exclude_ghg_percap_d = cumulative_exclude_ghg/pop_d), 
-                         xcol = "pc_gdp_d", ycol = "cumulative_exclude_ghg_percap_d", stressor_type = "internal"))
 
-# Tests for shape of curve
-kuznets_summary <- kuznets_summary %>%
-  mutate(
-    # Sign of linear component
-    x1_direction = case_when(x_coeff > 0 ~ "positive", TRUE ~ "negative"),
-    # Significance of linear component
-    x1_sig_cat = case_when(x_coeff_sig <= 0.05 ~ "significant", TRUE ~ "not significant"),
-    # Significance of second order
-    x2_sig_cat = case_when(x2_coeff_sig <= 0.05 ~ "significant", TRUE ~ "not significant"),
-    # Stationary point
-    stationary_point = -1*x_coeff/(2*x2_coeff),
-    # Concavity
-    concavity = case_when(2*x2_coeff < 0 ~ "concave down", 2*x2_coeff > 0 ~ "concave up")
-  )
+# summary table for MS
+kuznets_summary %>%
+  separate(datasource, into = c("fp_source", "drop1", "drop2"), sep = "_") %>%
+  separate(footprint, into = c("fp", "drop3", "drop4"), sep = "_") %>%
+  select(fp_source, fp, kuznets_b1, kuznets_p1, kuznets_b2, kuznets_p2, kuznets_breakpoint, kuznets_evidence) %>%
+  kable(col.names = c("Source", "Footprint", "B1", "B1 sig", "B2", "B2 sig", 
+                      "Breakpoint", "Evidence summary"))
 
-kuznets_summary %>% 
-  filter(pressure != "tonnes_percap_d") %>%
-  mutate(stationary_point_in_range = case_when(
-    (stationary_point > min(total_stressor_percap$pc_gdp_d) &
-       stationary_point < max(total_stressor_percap$pc_gdp_d)) ~ "in range",
-    (stationary_point < min(total_stressor_percap$pc_gdp_d) |
-       stationary_point > max(total_stressor_percap$pc_gdp_d)) ~ "out of range"
-  )) %>%
-  mutate(
-    kuznets_evidence = case_when(
-    (x2_sig_cat == "significant" & concavity == "concave down" &
-       stationary_point_in_range == "in range") ~ "yes",
-    TRUE ~ "no"), 
-    pressure = gsub("_percap_d", "", pressure)) %>%
-    select(stressor_type, pressure, x1_direction, x1_sig_cat, concavity, x2_sig_cat, 
-           stationary_point_in_range, kuznets_evidence) %>%
-  kable(col.names = c("Source", "Pressure", "β1 sign", "β1 sig.", "Concavity", "β2 sig",  
-                      "Stationary pt", "Kuznets evidence"))
-```
 
-## SI Figure 3: Kuznets curves for internal footprint (produced and consumed in the same country) for each pressure. Lines show the fitted quadratic regression line with the gray band indicating the 95% confidence interval. 
-```{r}
-figS3 <- ggarrange(kuznets_internal_ghg, kuznets_internal_water,
-                            kuznets_internal_nutrients, kuznets_internal_disturbance,
-          ncol = 4, nrow = 1, heights = c(rep(3, 8)), widths = c(rep(1, 8)),
-          labels = c("GHG internal", "Water internal", "Nutrients internal", "Disturbance internal"),
-          font.label = list(size = 10, color = "black", face = "bold", family = NULL),
-          vjust = 1, common.legend = TRUE, legend = "bottom")
 
-ggsave("outputs/SIFig3.png", figS3, width = 12, height = 4, units = "in")
-```
-
-## SI Figure 4: Kuznets curves for total, internal and external tonnes consumed by country. Lines show the fitted quadratic regression line with the gray band indicating the 95% confidence interval. 
-```{r}
-figS4 <- ggarrange(kuznets_total_tonnes, kuznets_internal_tonnes, kuznets_external_tonnes, 
-          ncol = 3, nrow = 1, heights = c(rep(3, 8)), widths = c(rep(1, 8)),
-          labels = c("Tonnes total", "Tonnes internal", "Tonnes external"),
-          font.label = list(size = 10, color = "black", face = "bold", family = NULL),
-          vjust = 1, common.legend = TRUE, legend = "bottom")
-
-ggsave("outputs/SIFig4.png", figS4, width = 12, height = 4, units = "in")
 ```
 
 
-## SI Figure 5: Percent of consumption footprint that is foreign sourced versus land area by pressure and food group. Points are sized by exclusive economic zone area and colored by region.
+## SI figure 3: Curves for total, internal and external (foreign produced) tonnes consumed by country. Lines show the fitted quadratic regression line with the gray band indicating the 95% confidence interval. The black solid line represents the fitted regression line left of the breakpoint and the grey dashed line represents the fitted regression line right of the breakpoint, with the breakpoint indicated by the vertical dotted line. Regression fits are provided in SI Table 1. 
+```{r}
+figS3 <- ggarrange(two_lines_total_tonnes$plot, 
+          # internal
+          two_lines_internal_tonnes$plot, 
+          # external
+          two_lines_external_tonnes$plot, 
+          ncol = 3, nrow =1, common.legend = TRUE, legend = "bottom", 
+          labels = c("Tonnes total", "Tonnes internal", "Tonnes external"), 
+          font.label = list(size = 10, face = "bold", color = "black"),
+          label.x = 0.5,      # horizontal position 
+          label.y = 1,      # vertical position 
+          hjust = 0,        # default is -0.5; lower values move the label left
+          vjust = 1)        # default is 1.5; lower values move the label up
+
+ggsave(filename = "outputs/SIfig3.png", 
+       plot = figS3, 
+       width = 9, height = 3, units = "in")
+```
+
+
+## SI figure 4: Percent of consumption footprint that is foreign sourced versus land area by pressure and food group. Points are sized by exclusive economic zone area and colored by region.
 ```{r}
 # Create data frame to compare external footprint to land area
 compare_import_export_by_food <- stressor_trade_by_food %>%
@@ -1628,19 +1476,20 @@ land_vs_externalFP <- compare_import_export_by_food %>%
 
 land_vs_externalFP
 
-ggsave(filename = "outputs/SIFig5.png", land_vs_externalFP, width = 14, height = 8)
+ggsave(filename = "outputs/SIfig4.png", land_vs_externalFP, width = 14, height = 8)
 ```
 
-## SI Figure 6: 
+## SI figure 5: 
 ```{r}
 # This object is produced in the code chunk for figure 3
 tonnes_dev_sankey
 
-ggsave(filename = "outputs/SIFig6.png", width = 6, height = 4)
+ggsave(filename = "outputs/SIfig5.png", width = 6, height = 4)
 ```
-## SI Figure 7: Percent of tonnes or pressure falling within each flow direction for each food group. 
+
+## SI figure 6: Percent of tonnes or pressure falling within each flow direction for each food group. 
 ```{r}
-figS7 <- dev_cat_flows %>%
+figS6 <- dev_cat_flows %>%
   group_by(food_group, flow_direction) %>%
   summarise(tonnes = sum(tonnes), 
             ghg = sum(ghg), 
@@ -1659,9 +1508,9 @@ figS7 <- dev_cat_flows %>%
   labs(x = "Percent", y = "", fill = "Flow direction") +
   theme_bw()
 
-figS7
+figS6
 
-ggsave(filename = "outputs/SIFig7.png", width = 10, height = 4)
+ggsave(filename = "outputs/SIfig6.png", width = 10, height = 4)
 ```
 
 ## SI Table 2: Percentages by flow type for each pressure
@@ -1710,7 +1559,7 @@ dev_cat_flows %>%
 
 ```
 
-## SI Figure 8: Correlation matirx for variables considered for gravity model. 
+## SI figure 7: Correlation matirx for variables considered for gravity model. 
 ```{r}
 # Check variable correlations
 # Create custom labels
@@ -1724,7 +1573,7 @@ custom_labels <- c("Log(GDP)" = "log_gdp_o",
                    "Total land" = "total_land_o", 
                    "Total renewable water" = "total_renewable_water_o")
 
-figS8 <- stressor_trade_total %>% 
+figS7 <- stressor_trade_total %>% 
   mutate(log_gdp_o = log(gdp_o), 
          log_gdp_d = log(gdp_d)) %>%
   select(iso3_o, total_land_o, all_of(regressor_list)) %>%
@@ -1742,9 +1591,9 @@ figS8 <- stressor_trade_total %>%
          "EEZ" = "eez_total_o") %>%
   ggcorr(label = TRUE) 
 
-figS8
+figS7
 
-ggsave(filename = "outputs/SIFig8.png", figS8, width = 8, height = 8)
+ggsave(filename = "outputs/SIfig7.png", figS7, width = 8, height = 8)
 
 ```
 
@@ -1889,7 +1738,7 @@ fit_df_combined_basic %>%
 
 ```
 
-## SI Figure 9:  Percent of each country’s production pressure that is exported (stacked bar extending left) compared to the percent of the country’s consumption pressure that is associated with imported food (stacked bar extending right), with bars colored by food group and faceted by pressure.
+## SI figure 8:  Percent of each country’s production pressure that is exported (stacked bar extending left) compared to the percent of the country’s consumption pressure that is associated with imported food (stacked bar extending right), with bars colored by food group and faceted by pressure.
 ```{r, fig.height=10, fig.width=8}
 compare_pressure_source_by_food <- stressor_trade_by_food %>%
   group_by(iso3_d, country_d, flow, food_group) %>%
@@ -1971,7 +1820,7 @@ compare_pressure_balance %>%
   theme_bw() +
   theme(legend.position = "bottom")
 
-ggsave("outputs/SIFig9a.png", width = 8, height = 12, units = "in")
+ggsave("outputs/SIfig8a.png", width = 8, height = 12, units = "in")
 
 compare_pressure_balance %>%
   filter(flow == "foreign") %>%
@@ -2001,7 +1850,7 @@ compare_pressure_balance %>%
   theme_bw() +
   theme(legend.position = "bottom")
 
-ggsave("outputs/SIFig9b.png", width = 8, height = 12, units = "in")
+ggsave("outputs/SIfig8b.png", width = 8, height = 12, units = "in")
 ```
 
 
